@@ -1,7 +1,10 @@
+import argparse
 from collections import namedtuple
 
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
+
+from webnav.environment import EmbeddingWebNavEnvironment
 
 
 AgentModel = namedtuple("AgentModel",
@@ -41,20 +44,23 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
                 name="candidate_embeddings")
 
         input_dim = embedding_dim * 2
-        hidden_val = [current_node, query]
+        hidden_val = tf.concat(1, [current_node, query])
         assert hidden_dims[-1] == embedding_dim
         for out_dim in hidden_dims:
             hidden_val = layers.fully_connected(hidden_val, out_dim,
                     activation_fn=hidden_activation)
 
         # Calculate score of "stop" action.
-        stop_embedding = tf.get_variable("stop_embedding", (embedding_dim,))
+        stop_embedding = tf.get_variable("stop_embedding", (embedding_dim, 1))
         stop_scores = tf.matmul(hidden_val, stop_embedding)
 
         # Calculate score for each candidate.
         # batch_size * beam_size
-        scores = tf.squeeze(tf.matmul(tf.expand_dims(hidden_val, 1), candidates))
-        scores = tf.concat(1, [scores, tf.expand_dims(stop_scores, 1)])
+        hidden_val_ = tf.expand_dims(hidden_val, 2)
+        scores = tf.squeeze(tf.batch_matmul(candidates, hidden_val_))
+
+        # Add "stop" action
+        scores = tf.concat(1, [scores, stop_scores])
 
         # TODO: weight loss based on `num_candidates`?
         # Or maybe just feed in constant embedding for smaller beams, and let
@@ -65,3 +71,25 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
     return AgentModel(num_candidates, ys,
                       current_node, query, candidates,
                       loss)
+
+
+def train(args):
+    env = EmbeddingWebNavEnvironment(args.beam_size, args.wiki_path,
+                                     args.qp_path, args.emb_path)
+
+    model = build_model(args.beam_size, env.embedding_dim,
+                        hidden_dims=(256, env.embedding_dim))
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+
+    p.add_argument("--beam_size", default=10, type=int)
+    p.add_argument("--batch_size", default=64, type=int)
+
+    p.add_argument("--wiki_path", required=True)
+    p.add_argument("--qp_path", required=True)
+    p.add_argument("--emb_path", required=True)
+
+    args = p.parse_args()
+    train(args)

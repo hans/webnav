@@ -33,8 +33,8 @@ class WebNavEnvironment(Env):
         self._wiki = wiki.Wiki(wiki_path)
 
         data = qp.QP(qp_path)
-        self._all_queries = data.get_queries(["train"])
-        self._all_paths = data.get_queries(["train"])
+        self._all_queries = data.get_queries(["train"])[0]
+        self._all_paths = data.get_paths(["train"])[0]
 
         assert len(self._all_queries) == len(self._all_paths)
 
@@ -50,7 +50,7 @@ class WebNavEnvironment(Env):
         return self.reset_batch(self, 1)[0]
 
     def reset_batch(self, batch_size):
-        self._qp_ids = np.random.choice(len(self._queries), size=batch_size)
+        self._qp_ids = np.random.choice(len(self._all_queries), size=batch_size)
         self._queries = self._all_queries[self._qp_ids]
         self._paths = [self._all_paths[idx] for idx in self._qp_ids]
         # TODO why is this data nested?
@@ -71,30 +71,29 @@ class WebNavEnvironment(Env):
         the valid solution and other negatively-sampled candidate links on the
         page.
         """
-        # Gold next-page choices for each example
-        gold_next_ids = [path[idx + 1] if idx < len(path) - 1 else None
-                         for path, idx in zip(self._paths, self._cursors)]
+        candidates = []
+        for cursor, path in zip(self._cursors, self._paths):
+            cur_id = path[cursor]
+            # Retrieve gold next-page choice for this example
+            # TODO: handle variable length
+            gold_next_id = path[cursor + 1]
 
-        # Get IDs of candidate next pages for each example.
-        candidate_strs = self._wiki.f["links"][self._cur_article_ids]
-
-        for candidate_str, gold_next_id in zip(candidate_strs, gold_next_ids):
-            ids = candidate_str.strip().split(" ")
-            if ids[0] == "":
+            ids = self._wiki.get_article_links(cur_id)
+            if not ids:
                 assert False, "Shouldn't reach this spot in supervised mode"
-            else:
-                ids = [int(x) for id in ids if x != gold_next_id]
+            ids = [int(x) for x in ids if x != gold_next_id]
 
             sample_size = self.beam_size - 1
             if len(ids) > sample_size:
-                ids = random.sample(ids, self.beam_size)
+                ids = random.sample(ids, sample_size)
             # Pad to reach the sample size.
-            ids = ids + [self.DUMMY_PAGE] * max(0, self.beam_size - len(ids))
+            ids = ids + [self.DUMMY_PAGE] * max(0, sample_size - len(ids))
 
             # Include the gold page of course.
             ids = [gold_next_id] + ids
+            candidates.append(ids)
 
-            yield ids
+        return candidates
 
     def _prepare_actions(self):
         """
@@ -147,13 +146,16 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
 
     def __init__(self, beam_size, wiki_path, qp_path, wiki_emb_path,
                  vocab_source=vocab.GloveVocab, *args, **kwargs):
-        super(WebNavEnvironment, self).__init__(beam_size, wiki_path, qp_path,
-                                                *args, **kwargs)
+        super(EmbeddingWebNavEnvironment, self).__init__(
+                beam_size, wiki_path, qp_path, *args, **kwargs)
 
-        self._vocab = vocab_source()
-        self.embedding_dim = self._vocab.n_dim
+        # self._vocab = vocab_source()
+        # self.embedding_dim = self._vocab.n_dim
 
-        self._page_embeddings = wiki_emb.WikiEmb(wiki_emb_path)
+        #self._page_embeddings = wiki_emb.WikiEmb(wiki_emb_path).f["emb"]
+        # DEV: just fake the embeddings for now so that we can load quickly
+        self._page_embeddings = np.empty((len(self._wiki.f["title"]), 500))
+        self.embedding_dim = self._page_embeddings[0].size
 
         self._just_reset = False
         self._query_embeddings = False
@@ -175,11 +177,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
             self._query_embeddings = self._page_embeddings[query_page_ids]
 
         current_page_embeddings = self._page_embeddings[self._cur_article_ids]
-
-        # DEV
-        print self._beams.shape, self._page_embeddings.shape
         beam_embeddings = self._page_embeddings[self._beams]
-        print beam_embeddings.shape
 
         return self._query_embeddings, current_page_embeddings, \
                 beam_embeddings
