@@ -3,6 +3,7 @@ from collections import namedtuple
 
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
+from tqdm import trange
 
 from webnav.environment import EmbeddingWebNavEnvironment
 
@@ -67,6 +68,7 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
         # the model learn to always assign low score there.
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
                 scores, ys)
+        loss = tf.reduce_mean(loss)
 
     return AgentModel(num_candidates, ys,
                       current_node, query, candidates,
@@ -75,17 +77,49 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
 
 def train(args):
     env = EmbeddingWebNavEnvironment(args.beam_size, args.wiki_path,
-                                     args.qp_path, args.emb_path)
+                                     args.qp_path, args.emb_path,
+                                     args.path_length)
 
     model = build_model(args.beam_size, env.embedding_dim,
                         hidden_dims=(256, env.embedding_dim))
+
+    opt = tf.train.AdamOptimizer()
+    train_op = opt.minimize(model.loss)
+
+    with tf.Session() as sess:
+        sess.run(tf.initialize_all_variables())
+
+        for i in trange(args.num_iters):
+            query, cur_page, beam = env.reset_batch(args.batch_size)
+            t, done = 0, False
+
+            while not done:
+                feed = {
+                    model.current_node: cur_page,
+                    model.query: query,
+                    model.candidates: beam,
+                    model.ys: env.gold_actions,
+                }
+
+                loss, _ = sess.run([model.loss, train_op], feed)
+                print loss
+
+                # Take the gold step.
+                observations, dones, _ = env.step_batch(None)
+                query, cur_page, beam = observations
+
+                t += 1
+                done = dones.all()
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
 
+    p.add_argument("--path_length", default=3, type=int)
     p.add_argument("--beam_size", default=10, type=int)
     p.add_argument("--batch_size", default=64, type=int)
+
+    p.add_argument("--num_iters", default=10000, type=int)
 
     p.add_argument("--wiki_path", required=True)
     p.add_argument("--qp_path", required=True)

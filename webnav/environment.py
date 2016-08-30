@@ -21,12 +21,15 @@ class WebNavEnvironment(Env):
     # beam.
     DUMMY_PAGE = -1
 
-    def __init__(self, beam_size, wiki_path, qp_path, *args, **kwargs):
+    def __init__(self, beam_size, wiki_path, qp_path, path_length, *args,
+                 **kwargs):
         super(WebNavEnvironment, self).__init__(*args, **kwargs)
 
         self._load_dataset(wiki_path, qp_path)
 
         self.beam_size = beam_size
+        self.path_length = path_length
+
         self._action_space = Discrete(self.beam_size + 1)
 
     def _load_dataset(self, wiki_path, qp_path):
@@ -51,11 +54,19 @@ class WebNavEnvironment(Env):
 
     def reset_batch(self, batch_size):
         self._qp_ids = np.random.choice(len(self._all_queries), size=batch_size)
-        self._queries = self._all_queries[self._qp_ids]
-        self._paths = [self._all_paths[idx] for idx in self._qp_ids]
-        # TODO why is this data nested?
-        self._paths = [xs[0] for xs in self._paths]
+
+        self._queries, self._paths, self._lengths = [], [], []
+        for idx in self._qp_ids:
+            path = self._all_paths[idx][0]
+            if len(path) != self.path_length:
+                continue
+
+            self._queries.append(self._all_queries[idx])
+            self._paths.append(path)
+            self._lengths = len(path)
+
         self._cursors = np.zeros((batch_size,), dtype=np.int32)
+        self._lengths = np.array(self._lengths)
 
         self._prepare_actions()
         return self._observe_batch()
@@ -71,7 +82,7 @@ class WebNavEnvironment(Env):
         the valid solution and other negatively-sampled candidate links on the
         page.
         """
-        candidates = []
+        candidates, ys = [], []
         for cursor, path in zip(self._cursors, self._paths):
             cur_id = path[cursor]
             # Retrieve gold next-page choice for this example
@@ -91,9 +102,12 @@ class WebNavEnvironment(Env):
 
             # Include the gold page of course.
             ids = [gold_next_id] + ids
-            candidates.append(ids)
+            random.shuffle(ids)
 
-        return candidates
+            candidates.append(ids)
+            ys.append(ids.index(gold_next_id))
+
+        return candidates, ys
 
     def _prepare_actions(self):
         """
@@ -101,7 +115,10 @@ class WebNavEnvironment(Env):
         """
         # Only supports supervised / oracle case right now, where trajectory
         # history always follows the gold path
-        self._beams = np.array(self._get_candidate_beams())
+        beams, gold_actions = self._get_candidate_beams()
+
+        self._beams = np.array(beams)
+        self.gold_actions = gold_actions
 
     def step(self, action):
         observations, dones, rewards = self.step_batch([action])[0]
@@ -114,7 +131,7 @@ class WebNavEnvironment(Env):
         self._cursors += 1
 
         observations = self._observe_batch()
-        dones = self._cursors >= self._lengths
+        dones = self._cursors >= self._lengths - 1
         rewards = self._reward_batch(actions)
 
         return observations, dones, rewards
@@ -145,16 +162,16 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     """
 
     def __init__(self, beam_size, wiki_path, qp_path, wiki_emb_path,
-                 vocab_source=vocab.GloveVocab, *args, **kwargs):
+                 path_length, vocab_source=vocab.GloveVocab, *args, **kwargs):
         super(EmbeddingWebNavEnvironment, self).__init__(
-                beam_size, wiki_path, qp_path, *args, **kwargs)
+                beam_size, wiki_path, qp_path, path_length, *args, **kwargs)
 
         # self._vocab = vocab_source()
         # self.embedding_dim = self._vocab.n_dim
 
         #self._page_embeddings = wiki_emb.WikiEmb(wiki_emb_path).f["emb"]
-        # DEV: just fake the embeddings for now so that we can load quickly
-        self._page_embeddings = np.empty((len(self._wiki.f["title"]), 500))
+        # # DEV: just fake the embeddings for now so that we can load quickly
+        self._page_embeddings = np.random.random((len(self._wiki.f["title"]), 5)) * 2 - 1.0
         self.embedding_dim = self._page_embeddings[0].size
 
         self._just_reset = False
@@ -181,3 +198,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
 
         return self._query_embeddings, current_page_embeddings, \
                 beam_embeddings
+
+    def _reward_batch(self, actions):
+        # Ignore in supervised implementation for now.
+        pass
