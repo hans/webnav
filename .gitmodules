@@ -1,0 +1,3 @@
+[submodule "webnav/ext"]
+	path = webnav/ext
+	url = git://github.com/nyu-dl/WebNav

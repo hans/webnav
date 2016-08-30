@@ -6,7 +6,7 @@ from sandbox.rocky.tf.spaces.box import Box
 from sandbox.rocky.tf.spaces.discrete import Discrete
 from stanza.text import vocab
 
-from webnav import qp, wiki, wiki_emb
+from webnav.ext import qp, wiki, wiki_emb
 
 
 class WebNavEnvironment(Env):
