@@ -3,7 +3,7 @@ from collections import namedtuple
 
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
-from tqdm import trange
+from tqdm import tqdm, trange
 
 from webnav.environment import EmbeddingWebNavEnvironment
 
@@ -89,27 +89,28 @@ def train(args):
     with tf.Session() as sess:
         sess.run(tf.initialize_all_variables())
 
-        for i in trange(args.num_iters):
-            query, cur_page, beam = env.reset_batch(args.batch_size)
-            t, done = 0, False
+        for e in range(args.num_epochs):
+            for i in trange(len(env._all_queries), desc="epoch %i" % e):
+                query, cur_page, beam = env.reset_batch(args.batch_size)
+                t, done = 0, False
 
-            while not done:
-                feed = {
-                    model.current_node: cur_page,
-                    model.query: query,
-                    model.candidates: beam,
-                    model.ys: env.gold_actions,
-                }
+                while not done:
+                    feed = {
+                        model.current_node: cur_page,
+                        model.query: query,
+                        model.candidates: beam,
+                        model.ys: env.gold_actions,
+                    }
 
-                loss, _ = sess.run([model.loss, train_op], feed)
-                print loss
+                    loss, _ = sess.run([model.loss, train_op], feed)
+                    tqdm.write(str(loss))
 
-                # Take the gold step.
-                observations, dones, _ = env.step_batch(None)
-                query, cur_page, beam = observations
+                    # Take the gold step.
+                    observations, dones, _ = env.step_batch(None)
+                    query, cur_page, beam = observations
 
-                t += 1
-                done = dones.all()
+                    t += 1
+                    done = dones.all()
 
 
 if __name__ == "__main__":
@@ -119,7 +120,7 @@ if __name__ == "__main__":
     p.add_argument("--beam_size", default=10, type=int)
     p.add_argument("--batch_size", default=64, type=int)
 
-    p.add_argument("--num_iters", default=10000, type=int)
+    p.add_argument("--num_epochs", default=3, type=int)
 
     p.add_argument("--wiki_path", required=True)
     p.add_argument("--qp_path", required=True)

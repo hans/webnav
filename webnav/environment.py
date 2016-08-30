@@ -169,9 +169,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         # self._vocab = vocab_source()
         # self.embedding_dim = self._vocab.n_dim
 
-        #self._page_embeddings = wiki_emb.WikiEmb(wiki_emb_path).f["emb"]
-        # # DEV: just fake the embeddings for now so that we can load quickly
-        self._page_embeddings = np.random.random((len(self._wiki.f["title"]), 5)) * 2 - 1.0
+        self._page_embeddings = wiki_emb.WikiEmb(wiki_emb_path).f["emb"]
         self.embedding_dim = self._page_embeddings[0].size
 
         self._just_reset = False
