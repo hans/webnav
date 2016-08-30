@@ -1,11 +1,12 @@
 import random
 
 import numpy as np
-
 from rllab.envs.base import Env, Step
+from sandbox.rocky.tf.spaces.box import Box
 from sandbox.rocky.tf.spaces.discrete import Discrete
+from stanza.text import vocab
 
-from webnav import qp, wiki
+from webnav import qp, wiki, wiki_emb
 
 
 class WebNavEnvironment(Env):
@@ -101,7 +102,7 @@ class WebNavEnvironment(Env):
         """
         # Only supports supervised / oracle case right now, where trajectory
         # history always follows the gold path
-        self._beams = self._get_candidate_beams()
+        self._beams = np.array(self._get_candidate_beams())
 
     def step(self, action):
         observations, dones, rewards = self.step_batch([action])[0]
@@ -136,3 +137,49 @@ class WebNavEnvironment(Env):
         """
         # abstract
         raise NotImplementedError
+
+
+class EmbeddingWebNavEnvironment(WebNavEnvironment):
+
+    """
+    WebNavEnvironment which uses word embeddings all over the place.
+    """
+
+    def __init__(self, beam_size, wiki_path, qp_path, wiki_emb_path,
+                 vocab_source=vocab.GloveVocab, *args, **kwargs):
+        super(WebNavEnvironment, self).__init__(beam_size, wiki_path, qp_path,
+                                                *args, **kwargs)
+
+        self._vocab = vocab_source()
+        self.embedding_dim = self._vocab.n_dim
+
+        self._page_embeddings = wiki_emb.WikiEmb(wiki_emb_path)
+
+        self._just_reset = False
+        self._query_embeddings = False
+
+    @property
+    def observation_space(self):
+        # 2 embeddings (query and current page) plus the embeddings of articles
+        # on the beam
+        return Box(low=-5, high=5,
+                   shape=(2 + self.beam_size, self.embedding_dim))
+
+    def reset_batch(self, batch_size):
+        self._just_reset = True
+        return super(EmbeddingWebNavEnvironment, self).reset_batch(batch_size)
+
+    def _observe_batch(self):
+        if self._just_reset:
+            query_page_ids = [path[-1] for path in self._paths]
+            self._query_embeddings = self._page_embeddings[query_page_ids]
+
+        current_page_embeddings = self._page_embeddings[self._cur_article_ids]
+
+        # DEV
+        print self._beams.shape, self._page_embeddings.shape
+        beam_embeddings = self._page_embeddings[self._beams]
+        print beam_embeddings.shape
+
+        return self._query_embeddings, current_page_embeddings, \
+                beam_embeddings
