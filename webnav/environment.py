@@ -31,6 +31,9 @@ class WebNavEnvironment(Env):
         self.path_length = path_length
         self.is_training = is_training
 
+        if not is_training:
+            self._eval_cursor = 0
+
         self._action_space = Discrete(self.beam_size + 1)
 
     def _load_dataset(self, wiki_path, qp_path, is_training):
@@ -55,7 +58,16 @@ class WebNavEnvironment(Env):
         return self.reset_batch(self, 1)[0]
 
     def reset_batch(self, batch_size):
-        self._qp_ids = np.random.choice(len(self._all_queries), size=batch_size)
+        if self.is_training:
+            # Sample random minibatch
+            self._qp_ids = np.random.choice(len(self._all_queries), size=batch_size)
+        else:
+            if self._eval_cursor >= len(self._all_queries):
+                self._eval_cursor = 0
+            self._qp_ids = np.arange(self._eval_cursor,
+                                     min(len(self._all_queries) - 1,
+                                         self._eval_cursor + batch_size))
+            self._eval_cursor += batch_size
 
         self._queries, self._paths, self._lengths = [], [], []
         for idx in self._qp_ids:
@@ -125,6 +137,11 @@ class WebNavEnvironment(Env):
     def get_page_for_action(self, example_idx, action):
         return self._beams[example_idx, action] \
                 if action < self.beam_size else self.DUMMY_PAGE
+
+    def get_page_title(self, page_id):
+        if page_id == self.DUMMY_PAGE:
+            return "<STOP>"
+        return self._wiki.f["title"][page_id]
 
     def step(self, action):
         observations, dones, rewards = self.step_batch([action])[0]

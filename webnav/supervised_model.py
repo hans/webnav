@@ -1,5 +1,6 @@
 import argparse
 from collections import namedtuple
+import random
 
 import numpy as np
 import tensorflow as tf
@@ -147,16 +148,19 @@ def eval(model, env, sess, args):
 
     assert not env.is_training
     num_iters = len(env._all_queries) / args.batch_size + 1
-    losses, gold_trajectories, trajectories = [], [], []
+    gold_trajectories, trajectories = [], []
+    losses = []
 
-    for i in trange(num_iters):
+    for i in trange(num_iters, leave=True):
         query, cur_page, beam = env.reset_batch(args.batch_size)
         t, done = 0, False
+        losses_i = []
 
         # Sample a trajectory from a random batch element.
-        sample_idx = np.random.choice(args.batch_size)
-        trajectory = [env.cur_article_ids[sample_idx]]
-        gold_trajectory = trajectory[:]
+        sample_idx = np.random.choice(query.shape[0])
+        # (gold, sampled)
+        start_page = env.cur_article_ids[sample_idx]
+        trajectory = [(start_page, start_page)]
 
         while not done:
             feed = {
@@ -167,12 +171,12 @@ def eval(model, env, sess, args):
             }
 
             loss, scores = sess.run([model.loss, model.scores], feed)
-            losses.append(loss)
+            losses_i.append(loss)
 
             # Just sample one batch element
             a_pred = scores[sample_idx].argmax()
-            gold_trajectory.append(env._paths[sample_idx][env._cursors[sample_idx] + 1])
-            trajectory.append(env.get_page_for_action(sample_idx, a_pred))
+            trajectory.append((env._paths[sample_idx][env._cursors[sample_idx] + 1],
+                               env.get_page_for_action(sample_idx, a_pred)))
 
             # Take the gold step.
             observations, dones, _ = env.step_batch(None)
@@ -181,12 +185,27 @@ def eval(model, env, sess, args):
             t += 1
             done = dones.all()
 
-        gold_trajectories.append(gold_trajectory)
+        losses.append(losses_i)
         trajectories.append(trajectory)
 
-    loss = np.mean(losses)
-    print gold_trajectories
-    print trajectories
+    losses = np.array(losses)
+
+    loss = losses.mean()
+    tqdm.write("Validation loss: %.10f" % loss)
+
+    per_timestep_losses = losses.mean(axis=0)
+    tqdm.write("Per-timestep validation losses:\n%s\n\n"
+               % "\n".join("\t% 2i: %.10f" % (t, loss_t)
+                           for t, loss_t in enumerate(per_timestep_losses)))
+
+    # Log random trajectories
+    random.shuffle(trajectories)
+    for traj_pair in trajectories[:args.n_eval_trajectories]:
+        tqdm.write("Trajectory:")
+        for gold_id, pred_id in traj_pair[1:]:
+            # NB: Assumes traj with oracle
+            tqdm.write("\t%-30s\t%-30s" % (env.get_page_title(pred_id),
+                                           env.get_page_title(gold_id)))
 
 
 def train(args):
@@ -251,8 +270,9 @@ if __name__ == "__main__":
     p.add_argument("--num_epochs", default=3, type=int)
 
     p.add_argument("--logdir", default="/tmp/webnav_supervised")
-    p.add_argument("--eval_interval", default=100)
-    p.add_argument("--summary_step_interval", default=100)
+    p.add_argument("--eval_interval", default=100, type=int)
+    p.add_argument("--summary_step_interval", default=100, type=int)
+    p.add_argument("--n_eval_trajectories", default=5, type=int)
 
     p.add_argument("--wiki_path", required=True)
     p.add_argument("--qp_path", required=True)
