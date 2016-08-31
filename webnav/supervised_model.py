@@ -83,14 +83,21 @@ def train(args):
     model = build_model(args.beam_size, env.embedding_dim,
                         hidden_dims=(256, env.embedding_dim))
 
+    global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.AdamOptimizer()
-    train_op = opt.minimize(model.loss)
+    train_op = opt.minimize(model.loss, global_step=global_step)
 
-    with tf.Session() as sess:
-        sess.run(tf.initialize_all_variables())
+    sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step)
 
+    with sv.managed_session() as sess:
         for e in range(args.num_epochs):
+            if sv.should_stop():
+                break
+
             for i in trange(len(env._all_queries), desc="epoch %i" % e):
+                if sv.should_stop():
+                    break
+
                 query, cur_page, beam = env.reset_batch(args.batch_size)
                 t, done = 0, False
 
@@ -121,6 +128,9 @@ if __name__ == "__main__":
     p.add_argument("--batch_size", default=64, type=int)
 
     p.add_argument("--num_epochs", default=3, type=int)
+
+    p.add_argument("--logdir", default="/tmp/webnav_supervised")
+    p.add_argument("--summary_step_interval", default=100)
 
     p.add_argument("--wiki_path", required=True)
     p.add_argument("--qp_path", required=True)
