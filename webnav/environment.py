@@ -73,19 +73,14 @@ class WebNavEnvironment(Env):
         for idx in self._qp_ids:
             path = self._all_paths[idx][0]
             if len(path) != self.path_length:
-                continue
-
-            # Add STOP target at end of path.
-            path.append(self.DUMMY_PAGE)
+                assert path[-1] == self.DUMMY_PAGE
+            else:
+                # Add STOP target at end of path.
+                path.append(self.DUMMY_PAGE)
 
             self._queries.append(self._all_queries[idx])
             self._paths.append(path)
             self._num_hops.append(len(path) - 1)
-
-        if len(self._paths) == 0:
-            # Rare, but we managed to skip all the paths in this sample.
-            # Just repeat by recursing.
-            return self.reset_batch(batch_size)
 
         self._num_hops = np.array(self._num_hops)
         self._cursors = np.zeros_like(self._num_hops, dtype=np.int32)
@@ -220,12 +215,9 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
 
     def _observe_batch(self):
         if self._just_reset:
-            # print "===================="
             query_page_ids = [path[-1] for path in self._paths]
             self._query_embeddings = self._page_embeddings[query_page_ids]
             self._just_reset = False
-
-        # print [self._wiki.f["title"][idx] for idx in [path[cursor] for path, cursor in zip(self._paths, self._cursors)]]
 
         current_page_embeddings = self._page_embeddings[self.cur_article_ids]
         beam_embeddings = self._page_embeddings[self._beams]
