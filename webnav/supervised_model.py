@@ -14,6 +14,23 @@ AgentModel = namedtuple("AgentModel",
          "loss"])
 
 
+def score_beam(state, candidates):
+    embedding_dim = state.get_shape().tolist()[-1]
+
+    # Calculate score of "stop" action.
+    stop_embedding = tf.get_variable("stop_embedding", (embedding_dim, 1))
+    stop_scores = tf.matmul(state, stop_embedding)
+
+    # Calculate score for each candidate.
+    # batch_size * beam_size
+    scores = tf.squeeze(tf.batch_matmul(candidates,
+                                        tf.expand_dims(state, 2)))
+
+    # Add "stop" action
+    scores = tf.concat(1, [scores, stop_scores])
+    return scores
+
+
 def build_model(beam_size, embedding_dim, hidden_dims=(256,),
                 hidden_activation=tf.nn.tanh, name="model"):
     """
@@ -50,17 +67,7 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
             hidden_val = layers.fully_connected(hidden_val, out_dim,
                     activation_fn=hidden_activation)
 
-        # Calculate score of "stop" action.
-        stop_embedding = tf.get_variable("stop_embedding", (embedding_dim, 1))
-        stop_scores = tf.matmul(hidden_val, stop_embedding)
-
-        # Calculate score for each candidate.
-        # batch_size * beam_size
-        hidden_val_ = tf.expand_dims(hidden_val, 2)
-        scores = tf.squeeze(tf.batch_matmul(candidates, hidden_val_))
-
-        # Add "stop" action
-        scores = tf.concat(1, [scores, stop_scores])
+        scores = score_beam(hidden_val, candidates)
 
         # TODO: weight loss based on `num_candidates`?
         # Or maybe just feed in constant embedding for smaller beams, and let
@@ -70,6 +77,64 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
         loss = tf.reduce_mean(loss)
 
     return AgentModel(num_candidates, ys,
+                      current_node, query, candidates,
+                      loss)
+
+
+def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
+                          cells=None, name="model"):
+    with tf.variable_scope(name):
+        if cells is None:
+            cells = [tf.nn.rnn_cell.BasicLSTMCell(256),
+                     tf.nn.rnn_cell.BasicLSTMCell(embedding_dim)]
+
+        # Recurrent versions of the inputs in `build_model`
+        ys = [tf.placeholder(tf.int32, shape=(None,), name="ys_%i" % t)
+                             for t in range(num_timesteps)]
+        current_nodes = [tf.placeholder(tf.float32,
+                                        shape=(None, embedding_dim),
+                                        name="current_node_%i" % t)
+                         for t in range(num_timesteps)]
+        # Embedding of the query (pre-computed).
+        query = tf.placeholder(tf.float32, shape=(None, embedding_dim),
+                name="query")
+        # Embedding of all candidates on the beam (pre-computed).
+        candidates = [tf.placeholder(tf.float32,
+                                     shape=(None, beam_size, embedding_dim),
+                                     name="candidates_%i" % t)
+                      for t in range(num_timesteps)]
+
+        assert cells[-1].output_size == embedding_dim
+
+        # Run stacked RNN.
+        hid_vals = [[cell.zero_state() for cell in cells]]
+        scores = []
+        for t in range(num_timesteps):
+            if t > 0: tf.get_variable_scope.reuse_variables()
+
+            inp = tf.concat(1, [current_nodes[t], query])
+            hid_prev_t = hid_vals[-1]
+            hids = []
+            for cell, hid_prev in zip(cells, hid_prev_t):
+                out, state = cell(inp, hid_prev)
+
+                inp = out
+                hids.append((out, state))
+
+            hid_vals.append(hids)
+
+            # Use top hidden layer to calculate scores.
+            last_hidden = hid_vals[-1][0]
+            scores_t = score_beam(last_hidden, candidates[t])
+            scores.append(scores_t)
+
+        losses = [tf.nn.sparse_softmax_cross_entropy_with_logits(
+                        scores_t, ys_t)
+                  for scores_t, ys_t in zip(scores, ys)]
+        loss = tf.add_n(losses) / float(num_timesteps)
+        loss = tf.reduce_mean(loss)
+
+    return AgentModel(None, ys,
                       current_node, query, candidates,
                       loss)
 
