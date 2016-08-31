@@ -1,6 +1,7 @@
 import argparse
 from collections import namedtuple
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
 from tqdm import tqdm, trange
@@ -11,11 +12,11 @@ from webnav.environment import EmbeddingWebNavEnvironment
 AgentModel = namedtuple("AgentModel",
         ["num_candidates", "ys",
          "current_node", "query", "candidates",
-         "loss"])
+         "scores", "loss"])
 
 
 def score_beam(state, candidates):
-    embedding_dim = state.get_shape().tolist()[-1]
+    embedding_dim = state.get_shape()[-1]
 
     # Calculate score of "stop" action.
     stop_embedding = tf.get_variable("stop_embedding", (embedding_dim, 1))
@@ -78,7 +79,7 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
 
     return AgentModel(num_candidates, ys,
                       current_node, query, candidates,
-                      loss)
+                      scores, loss)
 
 
 def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
@@ -136,13 +137,66 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
 
     return AgentModel(None, ys,
                       current_node, query, candidates,
-                      loss)
+                      scores, loss)
+
+
+def eval(model, env, sess, args):
+    """
+    Evaluate the given model on a test environment and log detailed results.
+    """
+
+    assert not env.is_training
+    num_iters = len(env._all_queries) / args.batch_size + 1
+    losses, gold_trajectories, trajectories = [], [], []
+
+    for i in trange(num_iters):
+        query, cur_page, beam = env.reset_batch(args.batch_size)
+        t, done = 0, False
+
+        # Sample a trajectory from a random batch element.
+        sample_idx = np.random.choice(args.batch_size)
+        trajectory = [env.cur_article_ids[sample_idx]]
+        gold_trajectory = trajectory[:]
+
+        while not done:
+            feed = {
+                model.current_node: cur_page,
+                model.query: query,
+                model.candidates: beam,
+                model.ys: env.gold_actions,
+            }
+
+            loss, scores = sess.run([model.loss, model.scores], feed)
+            losses.append(loss)
+
+            # Just sample one batch element
+            a_pred = scores[sample_idx].argmax()
+            gold_trajectory.append(env._paths[sample_idx][env._cursors[sample_idx] + 1])
+            trajectory.append(env.get_page_for_action(sample_idx, a_pred))
+
+            # Take the gold step.
+            observations, dones, _ = env.step_batch(None)
+            query, cur_page, beam = observations
+
+            t += 1
+            done = dones.all()
+
+        gold_trajectories.append(gold_trajectory)
+        trajectories.append(trajectory)
+
+    loss = np.mean(losses)
+    print gold_trajectories
+    print trajectories
 
 
 def train(args):
     env = EmbeddingWebNavEnvironment(args.beam_size, args.wiki_path,
                                      args.qp_path, args.emb_path,
                                      args.path_length)
+    eval_env = EmbeddingWebNavEnvironment(args.beam_size, args.wiki_path,
+                                          args.qp_path, args.emb_path,
+                                          args.path_length,
+                                          is_training=False)
 
     model = build_model(args.beam_size, env.embedding_dim,
                         hidden_dims=(256, env.embedding_dim))
@@ -161,6 +215,9 @@ def train(args):
             for i in trange(len(env._all_queries), desc="epoch %i" % e):
                 if sv.should_stop():
                     break
+
+                if i % args.eval_interval == 0:
+                    eval(model, eval_env, sess, args)
 
                 query, cur_page, beam = env.reset_batch(args.batch_size)
                 t, done = 0, False
@@ -194,6 +251,7 @@ if __name__ == "__main__":
     p.add_argument("--num_epochs", default=3, type=int)
 
     p.add_argument("--logdir", default="/tmp/webnav_supervised")
+    p.add_argument("--eval_interval", default=100)
     p.add_argument("--summary_step_interval", default=100)
 
     p.add_argument("--wiki_path", required=True)

@@ -21,23 +21,25 @@ class WebNavEnvironment(Env):
     # beam.
     DUMMY_PAGE = -1
 
-    def __init__(self, beam_size, wiki_path, qp_path, path_length, *args,
-                 **kwargs):
+    def __init__(self, beam_size, wiki_path, qp_path, path_length,
+                 is_training=True, *args, **kwargs):
         super(WebNavEnvironment, self).__init__(*args, **kwargs)
 
-        self._load_dataset(wiki_path, qp_path)
+        self._load_dataset(wiki_path, qp_path, is_training)
 
         self.beam_size = beam_size
         self.path_length = path_length
+        self.is_training = is_training
 
         self._action_space = Discrete(self.beam_size + 1)
 
-    def _load_dataset(self, wiki_path, qp_path):
+    def _load_dataset(self, wiki_path, qp_path, is_training):
         self._wiki = wiki.Wiki(wiki_path)
 
+        dataset_name = "train" if is_training else "valid"
         data = qp.QP(qp_path)
-        self._all_queries = data.get_queries(["train"])[0]
-        self._all_paths = data.get_paths(["train"])[0]
+        self._all_queries = data.get_queries([dataset_name])[0]
+        self._all_paths = data.get_paths([dataset_name])[0]
 
         assert len(self._all_queries) == len(self._all_paths)
 
@@ -72,7 +74,7 @@ class WebNavEnvironment(Env):
         return self._observe_batch()
 
     @property
-    def _cur_article_ids(self):
+    def cur_article_ids(self):
         return [path[idx] if idx < len(path) else None
                 for path, idx in zip(self._paths, self._cursors)]
 
@@ -119,6 +121,10 @@ class WebNavEnvironment(Env):
 
         self._beams = np.array(beams)
         self.gold_actions = gold_actions
+
+    def get_page_for_action(self, example_idx, action):
+        return self._beams[example_idx, action] \
+                if action < self.beam_size else self.DUMMY_PAGE
 
     def step(self, action):
         observations, dones, rewards = self.step_batch([action])[0]
@@ -191,7 +197,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
             query_page_ids = [path[-1] for path in self._paths]
             self._query_embeddings = self._page_embeddings[query_page_ids]
 
-        current_page_embeddings = self._page_embeddings[self._cur_article_ids]
+        current_page_embeddings = self._page_embeddings[self.cur_article_ids]
         beam_embeddings = self._page_embeddings[self._beams]
 
         return self._query_embeddings, current_page_embeddings, \
