@@ -69,18 +69,26 @@ class WebNavEnvironment(Env):
                                          self._eval_cursor + batch_size))
             self._eval_cursor += batch_size
 
-        self._queries, self._paths, self._lengths = [], [], []
+        self._queries, self._paths, self._num_hops = [], [], []
         for idx in self._qp_ids:
             path = self._all_paths[idx][0]
             if len(path) != self.path_length:
                 continue
 
+            # Add STOP target at end of path.
+            path.append(self.DUMMY_PAGE)
+
             self._queries.append(self._all_queries[idx])
             self._paths.append(path)
-            self._lengths = len(path)
+            self._num_hops.append(len(path) - 1)
 
-        self._cursors = np.zeros((batch_size,), dtype=np.int32)
-        self._lengths = np.array(self._lengths)
+        if len(self._paths) == 0:
+            # Rare, but we managed to skip all the paths in this sample.
+            # Just repeat by recursing.
+            return self.reset_batch(batch_size)
+
+        self._num_hops = np.array(self._num_hops)
+        self._cursors = np.zeros_like(self._num_hops, dtype=np.int32)
 
         self._prepare_actions()
         return self._observe_batch()
@@ -104,8 +112,6 @@ class WebNavEnvironment(Env):
             gold_next_id = path[cursor + 1]
 
             ids = self._wiki.get_article_links(cur_id)
-            if not ids:
-                assert False, "Shouldn't reach this spot in supervised mode"
             ids = [int(x) for x in ids if x != gold_next_id]
 
             sample_size = self.beam_size - 1
@@ -154,8 +160,11 @@ class WebNavEnvironment(Env):
         self._cursors += 1
 
         observations = self._observe_batch()
-        dones = self._cursors >= self._lengths - 1
+        dones = self._cursors >= self._num_hops - 1
         rewards = self._reward_batch(actions)
+
+        # Prepare action beam for the following timestep.
+        self._prepare_actions()
 
         return observations, dones, rewards
 
@@ -211,8 +220,12 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
 
     def _observe_batch(self):
         if self._just_reset:
+            # print "===================="
             query_page_ids = [path[-1] for path in self._paths]
             self._query_embeddings = self._page_embeddings[query_page_ids]
+            self._just_reset = False
+
+        # print [self._wiki.f["title"][idx] for idx in [path[cursor] for path, cursor in zip(self._paths, self._cursors)]]
 
         current_page_embeddings = self._page_embeddings[self.cur_article_ids]
         beam_embeddings = self._page_embeddings[self._beams]

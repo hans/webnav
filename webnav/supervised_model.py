@@ -17,7 +17,8 @@ AgentModel = namedtuple("AgentModel",
 
 
 def score_beam(state, candidates):
-    embedding_dim = state.get_shape()[-1]
+    embedding_dim = state.get_shape().as_list()[-1]
+    num_candidates = candidates.get_shape().as_list()[1]
 
     # Calculate score of "stop" action.
     stop_embedding = tf.get_variable("stop_embedding", (embedding_dim, 1))
@@ -25,8 +26,9 @@ def score_beam(state, candidates):
 
     # Calculate score for each candidate.
     # batch_size * beam_size
-    scores = tf.squeeze(tf.batch_matmul(candidates,
-                                        tf.expand_dims(state, 2)))
+    scores = tf.reshape(tf.batch_matmul(candidates,
+                                        tf.expand_dims(state, 2)),
+                        (-1, num_candidates))
 
     # Add "stop" action
     scores = tf.concat(1, [scores, stop_scores])
@@ -77,6 +79,8 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
         loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
                 scores, ys)
         loss = tf.reduce_mean(loss)
+
+        tf.scalar_summary("loss", loss)
 
     return AgentModel(num_candidates, ys,
                       current_node, query, candidates,
@@ -141,7 +145,7 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
                       scores, loss)
 
 
-def eval(model, env, sess, args):
+def eval(model, env, sv, sess, args):
     """
     Evaluate the given model on a test environment and log detailed results.
     """
@@ -151,7 +155,7 @@ def eval(model, env, sess, args):
     gold_trajectories, trajectories = [], []
     losses = []
 
-    for i in trange(num_iters, leave=True):
+    for i in trange(num_iters, desc="evaluating", leave=True):
         query, cur_page, beam = env.reset_batch(args.batch_size)
         t, done = 0, False
         losses_i = []
@@ -160,7 +164,7 @@ def eval(model, env, sess, args):
         sample_idx = np.random.choice(query.shape[0])
         # (gold, sampled)
         start_page = env.cur_article_ids[sample_idx]
-        trajectory = [(start_page, start_page)]
+        gold_traj, sampled_traj = [start_page], [start_page]
 
         while not done:
             feed = {
@@ -175,8 +179,8 @@ def eval(model, env, sess, args):
 
             # Just sample one batch element
             a_pred = scores[sample_idx].argmax()
-            trajectory.append((env._paths[sample_idx][env._cursors[sample_idx] + 1],
-                               env.get_page_for_action(sample_idx, a_pred)))
+            gold_traj.append(env._paths[sample_idx][env._cursors[sample_idx] + 1])
+            sampled_traj.append(env.get_page_for_action(sample_idx, a_pred))
 
             # Take the gold step.
             observations, dones, _ = env.step_batch(None)
@@ -186,7 +190,8 @@ def eval(model, env, sess, args):
             done = dones.all()
 
         losses.append(losses_i)
-        trajectories.append(trajectory)
+        gold_trajectories.append(gold_traj)
+        trajectories.append(sampled_traj)
 
     losses = np.array(losses)
 
@@ -194,18 +199,28 @@ def eval(model, env, sess, args):
     tqdm.write("Validation loss: %.10f" % loss)
 
     per_timestep_losses = losses.mean(axis=0)
-    tqdm.write("Per-timestep validation losses:\n%s\n\n"
+    tqdm.write("Per-timestep validation losses:\n%s\n"
                % "\n".join("\t% 2i: %.10f" % (t, loss_t)
                            for t, loss_t in enumerate(per_timestep_losses)))
 
     # Log random trajectories
-    random.shuffle(trajectories)
-    for traj_pair in trajectories[:args.n_eval_trajectories]:
+    traj_pairs = zip(gold_trajectories, trajectories)
+    random.shuffle(traj_pairs)
+    for gold_traj, traj in traj_pairs[:args.n_eval_trajectories]:
         tqdm.write("Trajectory:")
-        for gold_id, pred_id in traj_pair[1:]:
+        for start_id, pred_id in zip(gold_traj, traj[1:]):
             # NB: Assumes traj with oracle
-            tqdm.write("\t%-30s\t%-30s" % (env.get_page_title(pred_id),
-                                           env.get_page_title(gold_id)))
+            tqdm.write("\t%-40s\t%-40s" % (env.get_page_title(start_id),
+                                           env.get_page_title(pred_id)))
+        tqdm.write("\t%-40s" % env.get_page_title(gold_traj[-1]))
+
+    # Write summaries using supervisor.
+    summary = tf.Summary()
+    summary.value.add(tag="eval/loss", simple_value=np.asscalar(loss))
+    for t, loss_t in enumerate(per_timestep_losses):
+        summary.value.add(tag="eval/loss_t%i" % t,
+                          simple_value=np.asscalar(loss_t))
+    sv.summary_computed(sess, summary)
 
 
 def train(args):
@@ -224,7 +239,10 @@ def train(args):
     opt = tf.train.AdamOptimizer()
     train_op = opt.minimize(model.loss, global_step=global_step)
 
-    sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step)
+    summary_op = tf.merge_all_summaries()
+
+    sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
+                             summary_op=None)
 
     with sv.managed_session() as sess:
         for e in range(args.num_epochs):
@@ -236,7 +254,10 @@ def train(args):
                     break
 
                 if i % args.eval_interval == 0:
-                    eval(model, eval_env, sess, args)
+                    tqdm.write("============================\n"
+                               "Evaluating at example %i, epoch %i"
+                               % (i, e))
+                    eval(model, eval_env, sv, sess, args)
 
                 query, cur_page, beam = env.reset_batch(args.batch_size)
                 t, done = 0, False
@@ -249,8 +270,24 @@ def train(args):
                         model.ys: env.gold_actions,
                     }
 
-                    loss, _ = sess.run([model.loss, train_op], feed)
-                    tqdm.write(str(loss))
+                    do_summary = i % args.summary_interval == 0
+                    summary_fetch = summary_op if do_summary else train_op
+
+                    loss, _, summary = sess.run([model.loss, train_op,
+                                                 summary_fetch],
+                                                feed)
+
+                    # # DEV
+                    # actions = scores.argmax(axis=1)
+                    # page_ids = [env.get_page_for_action(i, action)
+                    #             for i, action in enumerate(actions)]
+                    # print "\t", [env._wiki.f["title"][page_id] for page_id in page_ids]
+                    # if any([idx == page_ids[i] for i, idx
+                    #         in enumerate(env.cur_article_ids)]):
+                    #     raise ValueError
+
+                    if do_summary:
+                        sv.summary_computed(sess, summary)
 
                     # Take the gold step.
                     observations, dones, _ = env.step_batch(None)
@@ -271,7 +308,7 @@ if __name__ == "__main__":
 
     p.add_argument("--logdir", default="/tmp/webnav_supervised")
     p.add_argument("--eval_interval", default=100, type=int)
-    p.add_argument("--summary_step_interval", default=100, type=int)
+    p.add_argument("--summary_interval", default=100, type=int)
     p.add_argument("--n_eval_trajectories", default=5, type=int)
 
     p.add_argument("--wiki_path", required=True)
