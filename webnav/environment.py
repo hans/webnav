@@ -72,11 +72,8 @@ class WebNavEnvironment(Env):
         self._queries, self._paths, self._num_hops = [], [], []
         for idx in self._qp_ids:
             path = self._all_paths[idx][0]
-            if len(path) != self.path_length:
-                assert path[-1] == self.DUMMY_PAGE
-            else:
-                # Add STOP target at end of path.
-                path.append(self.DUMMY_PAGE)
+            # Pad short paths with STOP targets.
+            path = path + [self.DUMMY_PAGE] * (self.path_length + 1 - len(path))
 
             self._queries.append(self._all_queries[idx])
             self._paths.append(path)
