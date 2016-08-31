@@ -44,7 +44,6 @@ def build_model(beam_size, embedding_dim, hidden_dims=(256,),
                 tf.float32, shape=(None, beam_size, embedding_dim),
                 name="candidate_embeddings")
 
-        input_dim = embedding_dim * 2
         hidden_val = tf.concat(1, [current_node, query])
         assert hidden_dims[-1] == embedding_dim
         for out_dim in hidden_dims:
