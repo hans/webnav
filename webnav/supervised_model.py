@@ -249,7 +249,8 @@ def train(args):
             if sv.should_stop():
                 break
 
-            for i in trange(len(env._all_queries), desc="epoch %i" % e):
+            for i in trange(len(env._all_queries) / args.batch_size,
+                            desc="epoch %i" % e):
                 if sv.should_stop():
                     break
 
