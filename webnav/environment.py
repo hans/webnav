@@ -126,8 +126,9 @@ class WebNavEnvironment(Env):
             if len(ids) < sample_size:
                 while True:
                     distractors = set(np.random.choice(len(self._wiki.f["title"]),
-                                                       size=sample_size - len(ids)))
-                    if not set(distractors) & set(ids):
+                                                       size=sample_size - len(ids),
+                                                       replace=False))
+                    if not distractors & set(ids):
                         break
                 ids += distractors
 
