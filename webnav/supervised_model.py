@@ -41,8 +41,7 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
                           cells=None, name="model"):
     with tf.variable_scope(name):
         if cells is None:
-            cells = [tf.nn.rnn_cell.BasicLSTMCell(256, state_is_tuple=True),
-                     tf.nn.rnn_cell.BasicLSTMCell(embedding_dim, state_is_tuple=True)]
+            cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
 
         # Recurrent versions of the inputs in `build_model`
         ys = [tf.placeholder(tf.int32, shape=(None,), name="ys_%i" % t)
@@ -59,8 +58,6 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
                                      shape=(None, beam_size, embedding_dim),
                                      name="candidates_%i" % t)
                       for t in range(num_timesteps)]
-
-        assert cells[-1].output_size == embedding_dim
 
         # Run stacked RNN.
         batch_size = tf.shape(current_nodes[0])[0]
@@ -81,7 +78,10 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
 
             # Use top hidden layer to calculate scores.
             last_hidden = hid_t[-1][0]
-            # print "\n".join(str(xs) for xs in hid_vals)
+            if cells[-1].output_size != embedding_dim:
+                last_hidden = layers.fully_connected(last_hidden,
+                        embedding_dim, scope="state_projection")
+
             scores_t = score_beam(last_hidden, candidates[t])
             scores.append(scores_t)
 
