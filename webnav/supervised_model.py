@@ -216,17 +216,18 @@ def train(args):
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
+    batches_per_epoch = len(env._all_queries) / args.batch_size + 1
     with sv.managed_session() as sess:
         for e in range(args.num_epochs):
             if sv.should_stop():
                 break
 
-            for i in trange(len(env._all_queries) / args.batch_size,
-                            desc="epoch %i" % e):
+            for i in trange(batches_per_epoch, desc="epoch %i" % e):
                 if sv.should_stop():
                     break
 
-                if i % args.eval_interval == 0:
+                batch_num = i + e * batches_per_epoch
+                if batch_num % args.eval_interval == 0:
                     tqdm.write("============================\n"
                                "Evaluating at example %i, epoch %i"
                                % (i, e))
@@ -244,7 +245,7 @@ def train(args):
                     if t == 0:
                         feed[model.query] = query
 
-                    do_summary = i % args.summary_interval == 0
+                    do_summary = batch_num % args.summary_interval == 0
                     summary_fetch = summary_op if do_summary else train_op
 
                     sess.partial_run(sm.partial_handle, model.all_losses[t], feed)
