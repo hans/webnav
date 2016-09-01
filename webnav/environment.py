@@ -27,6 +27,14 @@ class WebNavEnvironment(Env):
         # Works in expectation. :)
         self._stop_sentinel = np.random.choice(len(self._wiki.f["title"]))
 
+        # Hack: use another random page as a dummy page which will fill up
+        # beams which are too small.
+        # Again, works in expectation.
+        self._dummy_page = np.random.choice(len(self._wiki.f["title"]))
+
+        assert self._stop_sentinel != self._dummy_page, \
+                "A very improbable event occurred! Try running again."
+
         self.beam_size = beam_size
         self.path_length = path_length
         self.is_training = is_training
@@ -124,13 +132,7 @@ class WebNavEnvironment(Env):
             if len(ids) > sample_size:
                 ids = random.sample(ids, sample_size)
             if len(ids) < sample_size:
-                while True:
-                    distractors = set(np.random.choice(len(self._wiki.f["title"]),
-                                                       size=sample_size - len(ids),
-                                                       replace=False))
-                    if not distractors & set(ids):
-                        break
-                ids += distractors
+                ids += [self._dummy_page] * (sample_size - len(ids))
 
             # Add the gold page.
             ids = [gold_next_id] + ids
