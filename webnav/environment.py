@@ -17,15 +17,15 @@ class WebNavEnvironment(Env):
     abstract.
     """
 
-    # ID of a "dummy page" which represents an invalid choice present on the
-    # beam.
-    DUMMY_PAGE = -1
-
     def __init__(self, beam_size, wiki_path, qp_path, path_length,
                  is_training=True, *args, **kwargs):
         super(WebNavEnvironment, self).__init__(*args, **kwargs)
 
         self._load_dataset(wiki_path, qp_path, is_training)
+
+        # Hack: use a random page as the "STOP" sentinel.
+        # Works in expectation. :)
+        self._stop_sentinel = np.random.choice(len(self._wiki.f["title"]))
 
         self.beam_size = beam_size
         self.path_length = path_length
@@ -73,7 +73,8 @@ class WebNavEnvironment(Env):
         for idx in self._qp_ids:
             path = self._all_paths[idx][0]
             # Pad short paths with STOP targets.
-            path = path + [self.DUMMY_PAGE] * (self.path_length + 1 - len(path))
+            pad_length = max(0, self.path_length + 1 - len(path))
+            path = path + [self._stop_sentinel] * pad_length
 
             self._queries.append(self._all_queries[idx])
             self._paths.append(path)
@@ -112,15 +113,31 @@ class WebNavEnvironment(Env):
             ids = self._wiki.get_article_links(cur_id)
             ids = [int(x) for x in ids if x != gold_next_id]
 
-            sample_size = self.beam_size - 1
+            # Beam must be large enough to hold gold + STOP + a distractor
+            assert self.beam_size >= 3
+            gold_is_stop = gold_next_id == self._stop_sentinel
+
+            # Number of distractors to sample
+            sample_size = self.beam_size - 1 if gold_is_stop \
+                    else self.beam_size - 2
+
             if len(ids) > sample_size:
                 ids = random.sample(ids, sample_size)
-            # Pad to reach the sample size.
-            ids = ids + [self.DUMMY_PAGE] * max(0, sample_size - len(ids))
+            if len(ids) < sample_size:
+                while True:
+                    distractors = set(np.random.choice(len(self._wiki.f["title"]),
+                                                       size=sample_size - len(ids)))
+                    if not set(distractors) & set(ids):
+                        break
+                ids += distractors
 
-            # Include the gold page of course.
+            # Add the gold page.
             ids = [gold_next_id] + ids
+            if not gold_is_stop:
+                ids += [self._stop_sentinel]
             random.shuffle(ids)
+
+            assert len(ids) == self.beam_size
 
             candidates.append(ids)
             ys.append(ids.index(gold_next_id))
@@ -140,10 +157,10 @@ class WebNavEnvironment(Env):
 
     def get_page_for_action(self, example_idx, action):
         return self._beams[example_idx, action] \
-                if action < self.beam_size else self.DUMMY_PAGE
+                if action < self.beam_size else self._stop_sentinel
 
     def get_page_title(self, page_id):
-        if page_id == self.DUMMY_PAGE:
+        if page_id == self._stop_sentinel:
             return "<STOP>"
         return self._wiki.f["title"][page_id]
 

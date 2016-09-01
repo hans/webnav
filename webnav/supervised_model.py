@@ -22,18 +22,12 @@ def score_beam(state, candidates):
     embedding_dim = state.get_shape().as_list()[-1]
     num_candidates = candidates.get_shape().as_list()[1]
 
-    # Calculate score of "stop" action.
-    stop_embedding = tf.get_variable("stop_embedding", (embedding_dim, 1))
-    stop_scores = tf.matmul(state, stop_embedding)
-
-    # Calculate score for each candidate.
+    # Calculate score for each candidate (batched dot product)
     # batch_size * beam_size
     scores = tf.reshape(tf.batch_matmul(candidates,
                                         tf.expand_dims(state, 2)),
                         (-1, num_candidates))
 
-    # Add "stop" action
-    scores = tf.concat(1, [scores, stop_scores])
     return scores
 
 
