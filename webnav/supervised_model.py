@@ -1,5 +1,6 @@
 import argparse
 from collections import namedtuple
+from functools import partial
 import random
 
 import numpy as np
@@ -8,12 +9,13 @@ from tensorflow.contrib.layers import layers
 from tqdm import tqdm, trange
 
 from webnav.environment import EmbeddingWebNavEnvironment
+from webnav.session import PartialRunSessionManager
 
 
 AgentModel = namedtuple("AgentModel",
         ["num_candidates", "ys",
          "current_node", "query", "candidates",
-         "scores", "loss"])
+         "scores", "all_losses", "loss"])
 
 
 def score_beam(state, candidates):
@@ -91,8 +93,8 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
                           cells=None, name="model"):
     with tf.variable_scope(name):
         if cells is None:
-            cells = [tf.nn.rnn_cell.BasicLSTMCell(256),
-                     tf.nn.rnn_cell.BasicLSTMCell(embedding_dim)]
+            cells = [tf.nn.rnn_cell.BasicLSTMCell(256, state_is_tuple=True),
+                     tf.nn.rnn_cell.BasicLSTMCell(embedding_dim, state_is_tuple=True)]
 
         # Recurrent versions of the inputs in `build_model`
         ys = [tf.placeholder(tf.int32, shape=(None,), name="ys_%i" % t)
@@ -113,41 +115,52 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
         assert cells[-1].output_size == embedding_dim
 
         # Run stacked RNN.
-        hid_vals = [[cell.zero_state() for cell in cells]]
+        batch_size = tf.shape(current_nodes[0])[0]
+        hid_vals = [[cell.zero_state(batch_size, tf.float32)
+                     for cell in cells]]
         scores = []
         for t in range(num_timesteps):
-            if t > 0: tf.get_variable_scope.reuse_variables()
+            if t > 0: tf.get_variable_scope().reuse_variables()
 
             inp = tf.concat(1, [current_nodes[t], query])
             hid_prev_t = hid_vals[-1]
-            hids = []
-            for cell, hid_prev in zip(cells, hid_prev_t):
-                out, state = cell(inp, hid_prev)
+            hid_t = []
+            for i, (cell, hid_prev) in enumerate(zip(cells, hid_prev_t)):
+                inp, hid_t_i = cell(inp, hid_prev, scope="layer%i" % i)
+                hid_t.append(hid_t_i)
 
-                inp = out
-                hids.append((out, state))
-
-            hid_vals.append(hids)
+            hid_vals.append(hid_t)
 
             # Use top hidden layer to calculate scores.
-            last_hidden = hid_vals[-1][0]
+            last_hidden = hid_t[-1][0]
+            # print "\n".join(str(xs) for xs in hid_vals)
             scores_t = score_beam(last_hidden, candidates[t])
             scores.append(scores_t)
 
         losses = [tf.nn.sparse_softmax_cross_entropy_with_logits(
                         scores_t, ys_t)
                   for scores_t, ys_t in zip(scores, ys)]
+        losses = [tf.reduce_mean(loss_t) for loss_t in losses]
         loss = tf.add_n(losses) / float(num_timesteps)
-        loss = tf.reduce_mean(loss)
+
+        tf.scalar_summary("loss", loss)
 
     return AgentModel(None, ys,
-                      current_node, query, candidates,
-                      scores, loss)
+                      current_nodes, query, candidates,
+                      scores, losses, loss)
 
 
-def eval(model, env, sv, sess, args):
+def eval(model, env, sv, sm, sess, args):
     """
     Evaluate the given model on a test environment and log detailed results.
+
+    Args:
+        model:
+        env:
+        sv: Supervisor
+        sm: SessionManager (for partial runs)
+        sess: Session
+        args:
     """
 
     assert not env.is_training
@@ -168,13 +181,15 @@ def eval(model, env, sv, sess, args):
 
         while not done:
             feed = {
-                model.current_node: cur_page,
-                model.query: query,
-                model.candidates: beam,
-                model.ys: env.gold_actions,
+                model.current_node[t]: cur_page,
+                model.candidates[t]: beam,
+                model.ys[t]: env.gold_actions,
             }
+            if t == 0:
+                feed[model.query] = query
 
-            loss, scores = sess.run([model.loss, model.scores], feed)
+            fetch = [model.all_losses[t], model.scores[t]]
+            loss, scores = sess.partial_run(sm.partial_handle, fetch, feed)
             losses_i.append(loss)
 
             # Just sample one batch element
@@ -192,6 +207,8 @@ def eval(model, env, sv, sess, args):
         losses.append(losses_i)
         gold_trajectories.append(gold_traj)
         trajectories.append(sampled_traj)
+
+        sm.reset_partial_handle(sess)
 
     losses = np.array(losses)
 
@@ -232,17 +249,29 @@ def train(args):
                                           args.path_length,
                                           is_training=False)
 
-    model = build_model(args.beam_size, env.embedding_dim,
-                        hidden_dims=(256, env.embedding_dim))
+    model = build_recurrent_model(args.beam_size, args.path_length,
+                                  env.embedding_dim)
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.AdamOptimizer()
-    train_op = opt.minimize(model.loss, global_step=global_step)
+    train_op_ = opt.minimize(model.loss, global_step=global_step)
+    # Build a `train_op` Tensor which depends on the actual train op target.
+    # This is a hack to get around the current design of partial_run, which
+    # does not support targets as fetches.
+    # https://github.com/tensorflow/tensorflow/issues/1899
+    with tf.control_dependencies([train_op_]):
+        train_op = tf.constant(0., name="train_op")
 
     summary_op = tf.merge_all_summaries()
 
+    # Build a Supervisor session that supports partial runs.
+    sm = PartialRunSessionManager(
+            partial_fetches=model.scores + model.all_losses + \
+                    [train_op, summary_op],
+            partial_feeds=model.current_node + model.candidates + \
+                    model.ys + [model.query])
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
-                             summary_op=None)
+                             session_manager=sm, summary_op=None)
 
     with sv.managed_session() as sess:
         for e in range(args.num_epochs):
@@ -258,37 +287,24 @@ def train(args):
                     tqdm.write("============================\n"
                                "Evaluating at example %i, epoch %i"
                                % (i, e))
-                    eval(model, eval_env, sv, sess, args)
+                    eval(model, eval_env, sv, sm, sess, args)
 
                 query, cur_page, beam = env.reset_batch(args.batch_size)
                 t, done = 0, False
 
                 while not done:
                     feed = {
-                        model.current_node: cur_page,
-                        model.query: query,
-                        model.candidates: beam,
-                        model.ys: env.gold_actions,
+                        model.current_node[t]: cur_page,
+                        model.candidates[t]: beam,
+                        model.ys[t]: env.gold_actions,
                     }
+                    if t == 0:
+                        feed[model.query] = query
 
                     do_summary = i % args.summary_interval == 0
                     summary_fetch = summary_op if do_summary else train_op
 
-                    loss, _, summary = sess.run([model.loss, train_op,
-                                                 summary_fetch],
-                                                feed)
-
-                    # # DEV
-                    # actions = scores.argmax(axis=1)
-                    # page_ids = [env.get_page_for_action(i, action)
-                    #             for i, action in enumerate(actions)]
-                    # print "\t", [env._wiki.f["title"][page_id] for page_id in page_ids]
-                    # if any([idx == page_ids[i] for i, idx
-                    #         in enumerate(env.cur_article_ids)]):
-                    #     raise ValueError
-
-                    if do_summary:
-                        sv.summary_computed(sess, summary)
+                    sess.partial_run(sm.partial_handle, model.all_losses[t], feed)
 
                     # Take the gold step.
                     observations, dones, _ = env.step_batch(None)
@@ -296,6 +312,16 @@ def train(args):
 
                     t += 1
                     done = dones.all()
+
+                do_summary = i % args.summary_interval == 0
+                summary_fetch = summary_op if do_summary else train_op
+
+                _, summary = sess.partial_run(sm.partial_handle,
+                                              [train_op, summary_fetch])
+                sm.reset_partial_handle(sess)
+
+                if do_summary:
+                    sv.summary_computed(sess, summary)
 
 
 if __name__ == "__main__":

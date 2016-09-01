@@ -100,8 +100,14 @@ class WebNavEnvironment(Env):
         for cursor, path in zip(self._cursors, self._paths):
             cur_id = path[cursor]
             # Retrieve gold next-page choice for this example
-            # TODO: handle variable length
-            gold_next_id = path[cursor + 1]
+            try:
+                gold_next_id = path[cursor + 1]
+            except IndexError:
+                # We are at the end of this path and ready to quit. No need to
+                # prepare a beam.
+                candidates.append(None)
+                ys.append(None)
+                continue
 
             ids = self._wiki.get_article_links(cur_id)
             ids = [int(x) for x in ids if x != gold_next_id]
@@ -152,7 +158,7 @@ class WebNavEnvironment(Env):
         self._cursors += 1
 
         observations = self._observe_batch()
-        dones = self._cursors >= self._num_hops - 1
+        dones = self._cursors >= self._num_hops
         rewards = self._reward_batch(actions)
 
         # Prepare action beam for the following timestep.
