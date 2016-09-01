@@ -1,6 +1,7 @@
 import argparse
 from collections import namedtuple
 from functools import partial
+import pprint
 import random
 
 import numpy as np
@@ -287,4 +288,6 @@ if __name__ == "__main__":
     p.add_argument("--emb_path", required=True)
 
     args = p.parse_args()
+    pprint.pprint(vars(args))
+
     train(args)
