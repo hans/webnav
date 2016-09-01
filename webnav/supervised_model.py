@@ -201,7 +201,7 @@ def train(args):
                                   env.embedding_dim)
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
-    opt = tf.train.AdamOptimizer()
+    opt = tf.train.AdamOptimizer(args.learning_rate)
     train_op_ = opt.minimize(model.loss, global_step=global_step)
     # Build a `train_op` Tensor which depends on the actual train op target.
     # This is a hack to get around the current design of partial_run, which
@@ -278,6 +278,7 @@ if __name__ == "__main__":
     p.add_argument("--path_length", default=3, type=int)
     p.add_argument("--beam_size", default=10, type=int)
     p.add_argument("--batch_size", default=64, type=int)
+    p.add_argument("--learning_rate", default=0.001, type=float)
 
     p.add_argument("--num_epochs", default=3, type=int)
 
