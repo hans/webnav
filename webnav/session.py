@@ -154,8 +154,6 @@ class SessionManager(object):
         wait_for_checkpoint=wait_for_checkpoint,
         max_wait_secs=max_wait_secs, config=config)
 
-    self._setup_session(sess)
-
     if not initialized:
       if not init_op and not init_fn:
         raise RuntimeError("Model is not initialized and no init_op or "
@@ -169,6 +167,8 @@ class SessionManager(object):
         raise RuntimeError("Init operations did not make model ready.  "
                            "Init op: %s, init fn: %s, error: %s"
                            % (init_op.name, init_fn, not_ready))
+
+    self._setup_session(sess)
     return sess
 
   def _setup_session(self, session):
