@@ -201,7 +201,7 @@ def train(args):
                                   env.embedding_dim)
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
-    opt = tf.train.AdamOptimizer(args.learning_rate)
+    opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)
     train_op_ = opt.minimize(model.loss, global_step=global_step)
     # Build a `train_op` Tensor which depends on the actual train op target.
     # This is a hack to get around the current design of partial_run, which
@@ -215,7 +215,7 @@ def train(args):
     # Build a Supervisor session that supports partial runs.
     sm = PartialRunSessionManager(
             partial_fetches=model.scores + model.all_losses + \
-                    [train_op, summary_op],
+                    [train_op, summary_op, model.loss],
             partial_feeds=model.current_node + model.candidates + \
                     model.ys + [model.query])
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
@@ -264,12 +264,13 @@ def train(args):
                 do_summary = i % args.summary_interval == 0
                 summary_fetch = summary_op if do_summary else train_op
 
-                _, summary = sess.partial_run(sm.partial_handle,
-                                              [train_op, summary_fetch])
+                _, summary, loss = sess.partial_run(sm.partial_handle,
+                                              [train_op, summary_fetch, model.loss])
                 sm.reset_partial_handle(sess)
 
                 if do_summary:
                     sv.summary_computed(sess, summary)
+                    print loss
 
 
 if __name__ == "__main__":
