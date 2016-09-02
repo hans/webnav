@@ -2,6 +2,7 @@ import codecs
 from collections import defaultdict, namedtuple
 import os
 import re
+import random
 import sys
 import urllib
 
@@ -113,13 +114,17 @@ def load_raw_data(data_dir, lead_text_num_tokens=100):
     dev_ids = ids[n_train:n_train + int(0.1 * len(paths))]
     test_ids = ids[n_train + int(0.1 * len(paths)):]
 
-    train_paths = [paths[idx] for idx in train_ids]
-    dev_paths = [paths[idx] for idx in dev_ids]
-    test_paths = [paths[idx] for idx in test_ids]
+    train_paths = [dict(paths[idx]._asdict()) for idx in train_ids]
+    dev_paths = [dict(paths[idx]._asdict()) for idx in dev_ids]
+    test_paths = [dict(paths[idx]._asdict()) for idx in test_ids]
     paths = dict(train=train_paths, valid=dev_paths, test=test_paths)
 
-    return Wikispeedia(articles, categories, dict(category_articles),
-                       dict(links), paths)
+    # Convert to serialization-friendly dicts
+    articles = [dict(a._asdict()) for a in articles]
+
+    return dict(articles=articles, categories=categories,
+                category_articles=dict(category_articles),
+                links=dict(links), paths=paths)
 
 
 main_text_line = re.compile(r"""^   [^ ].*$""", re.MULTILINE)
@@ -150,16 +155,17 @@ def load_article(data_dir, title, category_ids, lead_text_num_tokens):
 
 def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab):
     vocab = vocab_cls()
-    for article in wikispeedia_data.articles:
-        vocab.update(article.lead_tokens)
+    articles = wikispeedia_data["articles"]
+    for article in articles:
+        vocab.update(article["lead_tokens"])
     print "loading embeddings"
     E = vocab.get_embeddings()
     print "done"
 
-    article_embeddings = np.empty((len(wikispeedia_data.articles), E.shape[1]))
-    for i, article in enumerate(wikispeedia_data.articles):
+    article_embeddings = np.empty((len(articles), E.shape[1]))
+    for i, article in enumerate(articles):
         n, embedding = 0, np.zeros((E.shape[1]))
-        for token in article.lead_tokens:
+        for token in article["lead_tokens"]:
             if token in vocab:
                 embedding += E[vocab[token]]
                 n += 1
