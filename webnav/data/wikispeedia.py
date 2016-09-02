@@ -12,6 +12,8 @@ except:
 
 import nltk
 from nltk.corpus import stopwords
+import numpy as np
+from stanza.text import GloveVocab
 
 
 def decode_name(name):
@@ -132,8 +134,41 @@ def load_article(data_dir, title, category_ids, lead_text_num_tokens):
     return Article(title, tokens, category_ids)
 
 
+def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab):
+    vocab = vocab_cls()
+    for article in wikispeedia_data.articles:
+        vocab.update(article.lead_tokens)
+    print "loading embeddings"
+    E = vocab.get_embeddings()
+    print "done"
+
+    article_embeddings = np.empty((len(wikispeedia_data.articles), E.shape[1]))
+    for i, article in enumerate(wikispeedia_data.articles):
+        n, embedding = 0, np.zeros((E.shape[1]))
+        for token in article.lead_tokens:
+            if token in vocab:
+                embedding += E[vocab[token]]
+                n += 1
+            elif token.lower() in vocab:
+                embedding += E[vocab[token.lower()]]
+                n += 1
+        article_embeddings[i] = embedding / float(n)
+
+    return article_embeddings
+
+
 if __name__ == "__main__":
-    data_dir = sys.argv[1]
-    data = load_raw_data(data_dir)
-    with open(sys.argv[2], "wb") as out_f:
-        pickle.dump(data, out_f, pickle.HIGHEST_PROTOCOL)
+    data_dir, out_file, emb_out_file = sys.argv[1:]
+
+    print "processing core wikispeedia data"
+    if os.path.exists(out_file):
+        with open(out_file, "rb") as f:
+            data = pickle.load(f)
+    else:
+        data = load_raw_data(data_dir)
+        with open(sys.argv[2], "wb") as out_f:
+            pickle.dump(data, out_f, pickle.HIGHEST_PROTOCOL)
+    print "done\n"
+
+    embeddings = make_article_embeddings(data)
+    np.savez(sys.argv[3], embeddings)
