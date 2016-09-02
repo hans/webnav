@@ -4,9 +4,6 @@ import numpy as np
 from rllab.envs.base import Env, Step
 from sandbox.rocky.tf.spaces.box import Box
 from sandbox.rocky.tf.spaces.discrete import Discrete
-from stanza.text import vocab
-
-from webnav.ext import qp, wiki, wiki_emb
 
 
 class WebNavEnvironment(Env):
@@ -17,42 +14,27 @@ class WebNavEnvironment(Env):
     abstract.
     """
 
-    def __init__(self, beam_size, wiki_path, qp_path, path_length,
-                 is_training=True, *args, **kwargs):
+    def __init__(self, beam_size, graph, is_training=True, *args, **kwargs):
         super(WebNavEnvironment, self).__init__(*args, **kwargs)
 
-        self._load_dataset(wiki_path, qp_path, is_training)
-
-        # Hack: use a random page as the "STOP" sentinel.
-        # Works in expectation. :)
-        self._stop_sentinel = np.random.choice(len(self._wiki.f["title"]))
+        self._graph = graph
 
         # Hack: use another random page as a dummy page which will fill up
         # beams which are too small.
         # Again, works in expectation.
-        self._dummy_page = np.random.choice(len(self._wiki.f["title"]))
+        self._dummy_page = np.random.choice(len(self._graph.articles))
 
-        assert self._stop_sentinel != self._dummy_page, \
-                "A very improbable event occurred! Try running again."
+        assert self._dummy_page != self._graph.stop_sentinel, \
+                "A very improbable event has occurred. Please restart."
 
         self.beam_size = beam_size
-        self.path_length = path_length
+        self.path_length = self._graph.path_length
         self.is_training = is_training
 
         if not is_training:
             self._eval_cursor = 0
 
         self._action_space = Discrete(self.beam_size + 1)
-
-    def _load_dataset(self, wiki_path, qp_path, is_training):
-        self._wiki = wiki.Wiki(wiki_path)
-
-        dataset_name = "train" if is_training else "valid"
-        data = qp.QP(qp_path)
-        self._all_queries = data.get_queries([dataset_name])[0]
-        self._all_paths = data.get_paths([dataset_name])[0]
-
-        assert len(self._all_queries) == len(self._all_paths)
 
     @property
     def action_space(self):
@@ -66,29 +48,10 @@ class WebNavEnvironment(Env):
         return self.reset_batch(self, 1)[0]
 
     def reset_batch(self, batch_size):
-        if self.is_training:
-            # Sample random minibatch
-            self._qp_ids = np.random.choice(len(self._all_queries), size=batch_size)
-        else:
-            if self._eval_cursor >= len(self._all_queries):
-                self._eval_cursor = 0
-            self._qp_ids = np.arange(self._eval_cursor,
-                                     min(len(self._all_queries) - 1,
-                                         self._eval_cursor + batch_size))
-            self._eval_cursor += batch_size
+        self._ids, self._queries, self._paths = \
+                self._graph.sample_queries_paths(batch_size, self.is_training)
 
-        self._queries, self._paths, self._num_hops = [], [], []
-        for idx in self._qp_ids:
-            path = self._all_paths[idx][0]
-            # Pad short paths with STOP targets.
-            pad_length = max(0, self.path_length + 1 - len(path))
-            path = path + [self._stop_sentinel] * pad_length
-
-            self._queries.append(self._all_queries[idx])
-            self._paths.append(path)
-            self._num_hops.append(len(path) - 1)
-
-        self._num_hops = np.array(self._num_hops)
+        self._num_hops = np.array([len(path) - 1 for path in self._paths])
         self._cursors = np.zeros_like(self._num_hops, dtype=np.int32)
 
         self._prepare_actions()
@@ -118,12 +81,12 @@ class WebNavEnvironment(Env):
                 ys.append(None)
                 continue
 
-            ids = self._wiki.get_article_links(cur_id)
+            ids = self._graph.get_article_links(cur_id)
             ids = [int(x) for x in ids if x != gold_next_id]
 
             # Beam must be large enough to hold gold + STOP + a distractor
             assert self.beam_size >= 3
-            gold_is_stop = gold_next_id == self._stop_sentinel
+            gold_is_stop = gold_next_id == self._graph.stop_sentinel
 
             # Number of distractors to sample
             sample_size = self.beam_size - 1 if gold_is_stop \
@@ -137,7 +100,7 @@ class WebNavEnvironment(Env):
             # Add the gold page.
             ids = [gold_next_id] + ids
             if not gold_is_stop:
-                ids += [self._stop_sentinel]
+                ids += [self._graph.stop_sentinel]
             random.shuffle(ids)
 
             assert len(ids) == self.beam_size
@@ -160,12 +123,7 @@ class WebNavEnvironment(Env):
 
     def get_page_for_action(self, example_idx, action):
         return self._beams[example_idx, action] \
-                if action < self.beam_size else self._stop_sentinel
-
-    def get_page_title(self, page_id):
-        if page_id == self._stop_sentinel:
-            return "<STOP>"
-        return self._wiki.f["title"][page_id]
+                if action < self.beam_size else self._graph.stop_sentinel
 
     def step(self, action):
         observations, dones, rewards = self.step_batch([action])[0]
@@ -211,16 +169,11 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     WebNavEnvironment which uses word embeddings all over the place.
     """
 
-    def __init__(self, beam_size, wiki_path, qp_path, wiki_emb_path,
-                 path_length, vocab_source=vocab.GloveVocab, *args, **kwargs):
+    def __init__(self, beam_size, graph, *args, **kwargs):
         super(EmbeddingWebNavEnvironment, self).__init__(
-                beam_size, wiki_path, qp_path, path_length, *args, **kwargs)
+                beam_size, graph, *args, **kwargs)
 
-        # self._vocab = vocab_source()
-        # self.embedding_dim = self._vocab.n_dim
-
-        self._page_embeddings = wiki_emb.WikiEmb(wiki_emb_path).f["emb"]
-        self.embedding_dim = self._page_embeddings[0].size
+        self.embedding_dim = self._graph.embedding_dim
 
         self._just_reset = False
         self._query_embeddings = False
@@ -238,12 +191,12 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
 
     def _observe_batch(self):
         if self._just_reset:
-            query_page_ids = [path[-1] for path in self._paths]
-            self._query_embeddings = self._page_embeddings[query_page_ids]
+            self._query_embeddings = self._graph.get_query_embeddings(
+                    self._queries, self._paths)
             self._just_reset = False
 
-        current_page_embeddings = self._page_embeddings[self.cur_article_ids]
-        beam_embeddings = self._page_embeddings[self._beams]
+        current_page_embeddings = self._graph.get_article_embeddings(self.cur_article_ids)
+        beam_embeddings = self._graph.get_article_embeddings(self._beams)
 
         return self._query_embeddings, current_page_embeddings, \
                 beam_embeddings
