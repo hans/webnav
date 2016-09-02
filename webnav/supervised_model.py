@@ -108,7 +108,7 @@ def eval(model, env, sv, sm, sess, args):
     """
 
     assert not env.is_training
-    num_iters = len(env._graph.datasets["valid"].queries) / args.batch_size + 1
+    num_iters = len(env._graph.datasets["valid"].paths) / args.batch_size + 1
     gold_trajectories, trajectories = [], []
     losses = []
 
@@ -185,8 +185,10 @@ def eval(model, env, sv, sm, sess, args):
 
 
 def train(args):
-    graph = EmbeddedWikiNavGraph(args.wiki_path, args.qp_path, args.emb_path,
-                                 args.path_length)
+    # graph = EmbeddedWikiNavGraph(args.wiki_path, args.qp_path, args.emb_path,
+    #                              args.path_length)
+    graph = EmbeddedWikispeediaGraph(args.wiki_path, args.emb_path,
+                                     args.path_length)
 
     env = EmbeddingWebNavEnvironment(args.beam_size, graph, is_training=True)
     eval_env = EmbeddingWebNavEnvironment(args.beam_size, graph,
@@ -216,7 +218,7 @@ def train(args):
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
-    batches_per_epoch = len(env._graph.datasets["train"].queries) / args.batch_size + 1
+    batches_per_epoch = len(env._graph.datasets["train"].paths) / args.batch_size + 1
     with sv.managed_session() as sess:
         for e in range(args.num_epochs):
             if sv.should_stop():

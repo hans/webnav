@@ -7,7 +7,6 @@ from collections import namedtuple
 import numpy as np
 
 
-Dataset = namedtuple("Dataset", ["queries", "paths"])
 EmbeddedArticle = namedtuple("EmbeddedArticle", ["name", "embedding", "text"])
 
 
@@ -29,27 +28,21 @@ class EmbeddedWebGraph(object):
 
         self._eval_cursor = 0
 
-    def sample_queries_paths(self, batch_size, is_training=True):
+    def sample_paths(self, batch_size, is_training=True):
         dataset = self.datasets["train" if is_training else "valid"]
 
         if is_training:
-            ids = np.random.choice(len(dataset.queries), size=batch_size)
+            ids = np.random.choice(len(dataset), size=batch_size)
         else:
-            if self._eval_cursor > len(dataset.queries):
+            if self._eval_cursor > len(dataset):
                 self._eval_cursor = 0
             ids = np.arange(self._eval_cursor,
-                            min(len(dataset.queries) - 1,
+                            min(len(dataset) - 1,
                                 self._eval_cursor + batch_size))
             self._eval_cursor += batch_size
 
-        queries, paths = [], []
-        for idx in ids:
-            query, path = self._prepare_query_path(dataset.queries[idx],
-                                                   dataset.paths[idx])
-            queries.append(query)
-            paths.append(path)
-
-        return ids, queries, paths
+        paths = [self._prepare_path(dataset[idx]) for idx in ids]
+        return ids, paths
 
     def get_article_links(self, article_idx):
         raise NotImplementedError
@@ -59,13 +52,13 @@ class EmbeddedWebGraph(object):
             return "<STOP>"
         return self.articles[article_idx].title
 
-    def get_query_embeddings(self, query_ids):
+    def get_query_embeddings(self, path_ids):
         raise NotImplementedError
 
     def get_article_embeddings(self, article_ids):
         raise NotImplementedError
 
-    def _prepare_query_path(self, query, path):
+    def _prepare_path(self, path):
         raise NotImplementedError
 
 
@@ -79,9 +72,10 @@ class EmbeddedWikiNavGraph(EmbeddedWebGraph):
             self.wiki_emb = wiki_emb
 
         def __getitem__(self, idx):
+            embedding = self.wiki_emb.get_article_embedding(idx) \
+                    if self.wiki_emb else None
             return EmbeddedArticle(
-                    self.wiki.get_article_title(idx),
-                    self.wiki_emb.get_article_embedding(idx) if self.wiki_emb else None,
+                    self.wiki.get_article_title(idx), embedding,
                     self.wiki.get_article_text(idx))
 
         def __len__(self):
@@ -98,12 +92,11 @@ class EmbeddedWikiNavGraph(EmbeddedWebGraph):
         articles = self.ArticlesDict(wiki, None)#wiki_emb)
 
         data = qp.QP(qp_path)
-        queries_train, queries_val = data.get_queries(["train", "valid"])
         paths_train, paths_val = data.get_paths(["train", "valid"])
 
         datasets = {
-            "train": Dataset(queries_train, paths_train),
-            "valid": Dataset(queries_val, paths_val),
+            "train": paths_train,
+            "valid": paths_val,
         }
 
         super(EmbeddedWikiNavGraph, self).__init__(articles, datasets,
@@ -112,9 +105,9 @@ class EmbeddedWikiNavGraph(EmbeddedWebGraph):
     def get_article_links(self, article_idx):
         return self._wiki.get_article_links(article_idx)
 
-    def get_query_embeddings(self, queries, paths):
+    def get_query_embeddings(self, paths):
         """
-        Fetch representations for a batch of query IDs.
+        Fetch representations for a batch of paths.
         """
 
         # Get the last non-STOP page in each corresponding path.
@@ -125,9 +118,54 @@ class EmbeddedWikiNavGraph(EmbeddedWebGraph):
     def get_article_embeddings(self, article_ids):
         return self._article_embeddings[article_ids]
 
-    def _prepare_query_path(self, query, path):
+    def _prepare_path(self, path):
         path = path[0]
         # Pad short paths with STOP targets.
         pad_length = max(0, self.path_length + 1 - len(path))
         path = path + [self.stop_sentinel] * pad_length
-        return query, path
+        return path
+
+
+class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
+
+    def __init__(self, data_path, emb_path, path_length):
+        try:
+            import cPickle as pickle
+        except: import pickle
+
+        with open(data_path, "rb") as data_f:
+            data = pickle.load(data_f)
+        self._data = data
+
+        self.embeddings = np.load(emb_path)["arr_0"]
+
+        articles = [EmbeddedArticle(article.name, embeddings[i], article.lead_tokens)
+                    for i, article in enumerate(data.articles)]
+        # datasets = {}
+        # for dataset_name, dataset in data.paths.iteritems():
+        #     paths = []
+        #     for path in dataset:
+        #         # TODO pad
+        #         paths.append(path)
+
+        #     datasets[dataset_name] = paths
+        datasets = data.paths
+
+        super(EmbeddedWikispeediaGraph, self).__init__(articles, datasets,
+                                                       path_length)
+
+    def get_article_links(self, article_idx):
+        return self._data.links[article_idx]
+
+    def get_query_embeddings(self, paths):
+        # Get the last non-STOP page in each corresponding path.
+        last_pages = [[idx for idx in path if idx != self.stop_sentinel][-1]
+                      for path in paths]
+        return self.get_article_embeddings(last_pages)
+
+    def get_article_embeddings(self, article_ids):
+        return self.embeddings[article_ids]
+
+    def prepare_path(self, path):
+        # TODO
+        return path

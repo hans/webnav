@@ -48,8 +48,8 @@ class WebNavEnvironment(Env):
         return self.reset_batch(self, 1)[0]
 
     def reset_batch(self, batch_size):
-        self._ids, self._queries, self._paths = \
-                self._graph.sample_queries_paths(batch_size, self.is_training)
+        self._ids, self._paths = \
+                self._graph.sample_paths(batch_size, self.is_training)
 
         self._num_hops = np.array([len(path) - 1 for path in self._paths])
         self._cursors = np.zeros_like(self._num_hops, dtype=np.int32)
@@ -192,7 +192,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     def _observe_batch(self):
         if self._just_reset:
             self._query_embeddings = self._graph.get_query_embeddings(
-                    self._queries, self._paths)
+                    self._paths)
             self._just_reset = False
 
         current_page_embeddings = self._graph.get_article_embeddings(self.cur_article_ids)
