@@ -266,7 +266,8 @@ def train(args):
 
                 if do_summary:
                     sv.summary_computed(sess, summary)
-                    tqdm.write("Batch % 5i training loss: %f" % loss)
+                    tqdm.write("Batch % 5i training loss: %f" %
+                               (batch_num, loss))
 
 
 if __name__ == "__main__":
