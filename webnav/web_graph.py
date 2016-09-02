@@ -153,7 +153,7 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
         for dataset_name, dataset in data["paths"].iteritems():
             paths, n_skipped = [], 0
             for path in dataset:
-                if len(path["articles"]) > path_length - 1:
+                if len(path["articles"]) > path_length:
                     n_skipped += 1
                     continue
 
