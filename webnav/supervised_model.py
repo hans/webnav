@@ -238,7 +238,7 @@ def train(args):
                 batch_num = i + e * batches_per_epoch
                 if batch_num % args.eval_interval == 0:
                     tqdm.write("============================\n"
-                               "Evaluating at example %i, epoch %i"
+                               "Evaluating at batch %i, epoch %i"
                                % (i, e))
                     eval(model, eval_env, sv, sm, sess, args)
 
