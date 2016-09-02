@@ -158,7 +158,7 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
                     continue
 
                 # Pad with STOP sentinel (every path gets at least one)
-                pad_length = max(0, path_length - len(path["articles"]))
+                pad_length = max(0, path_length + 1 - len(path["articles"]))
                 path = path["articles"] + [stop_sentinel] * pad_length
                 paths.append(path)
 
@@ -171,7 +171,7 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
                                                        stop_sentinel=stop_sentinel)
 
     def get_article_links(self, article_idx):
-        return self._data["links"][article_idx]
+        return self._data["links"].get(article_idx, [self.stop_sentinel])
 
     def get_query_embeddings(self, paths):
         # Get the last non-STOP page in each corresponding path.

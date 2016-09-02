@@ -269,8 +269,8 @@ def train(args):
                 do_summary = i % args.summary_interval == 0
                 summary_fetch = summary_op if do_summary else train_op
 
-                _, summary, loss = sess.partial_run(sm.partial_handle,
-                                              [train_op, summary_fetch, model.loss])
+                _, summary, loss = sess.partial_run(
+                        sm.partial_handle, [train_op, summary_fetch, model.loss])
                 sm.reset_partial_handle(sess)
 
                 if do_summary:
