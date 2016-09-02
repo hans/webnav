@@ -28,7 +28,7 @@ Article = namedtuple("Article", ["name", "lead_tokens", "categories"])
 Path = namedtuple("Path", ["duration", "articles", "has_backtrack"])
 
 
-def load_raw_data(data_dir, lead_text_num_tokens=100):
+def load_raw_data(data_dir, lead_text_num_tokens=200):
     titles, original_titles = [], []
     with open(os.path.join(data_dir, "articles.tsv"), "r") as titles_f:
         for line in titles_f:
@@ -106,13 +106,13 @@ def load_raw_data(data_dir, lead_text_num_tokens=100):
             paths.append(Path(int(fields[2]), ids, has_backtrack))
 
     # Split paths into train/val/test.
-    n_train = int(0.8 * len(paths))
+    n_train = int(0.9 * len(paths))
     ids = range(len(paths))
     random.shuffle(ids)
 
     train_ids = ids[:n_train]
-    dev_ids = ids[n_train:n_train + int(0.1 * len(paths))]
-    test_ids = ids[n_train + int(0.1 * len(paths)):]
+    dev_ids = ids[n_train:n_train + int(0.05 * len(paths))]
+    test_ids = ids[n_train + int(0.05 * len(paths)):]
 
     train_paths = [dict(paths[idx]._asdict()) for idx in train_ids]
     dev_paths = [dict(paths[idx]._asdict()) for idx in dev_ids]
