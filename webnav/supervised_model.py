@@ -86,7 +86,7 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
                         scores_t, ys_t)
                   for scores_t, ys_t in zip(scores, ys)]
         losses = [tf.reduce_mean(loss_t) for loss_t in losses]
-        loss = tf.add_n(losses) / float(num_timesteps)
+        loss = tf.add_n(losses) / float(len(losses))
 
         tf.scalar_summary("loss", loss)
 
