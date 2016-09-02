@@ -34,7 +34,7 @@ class EmbeddedWebGraph(object):
         if is_training:
             ids = np.random.choice(len(dataset), size=batch_size)
         else:
-            if self._eval_cursor > len(dataset):
+            if self._eval_cursor >= len(dataset):
                 self._eval_cursor = 0
             ids = np.arange(self._eval_cursor,
                             min(len(dataset) - 1,
