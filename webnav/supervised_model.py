@@ -12,6 +12,7 @@ from tqdm import tqdm, trange
 from webnav.environment import EmbeddingWebNavEnvironment
 from webnav.session import PartialRunSessionManager
 from webnav.web_graph import EmbeddedWikiNavGraph
+from webnav.web_graph import EmbeddedWikispeediaGraph
 
 
 AgentModel = namedtuple("AgentModel",
@@ -108,7 +109,7 @@ def eval(model, env, sv, sm, sess, args):
     """
 
     assert not env.is_training
-    num_iters = len(env._graph.datasets["valid"].paths) / args.batch_size + 1
+    num_iters = len(env._graph.datasets["valid"]) / args.batch_size + 1
     gold_trajectories, trajectories = [], []
     losses = []
 
@@ -171,9 +172,9 @@ def eval(model, env, sv, sm, sess, args):
         tqdm.write("Trajectory:")
         for start_id, pred_id in zip(gold_traj, traj[1:]):
             # NB: Assumes traj with oracle
-            tqdm.write("\t%-40s\t%-40s" % (env.get_page_title(start_id),
-                                           env.get_page_title(pred_id)))
-        tqdm.write("\t%-40s" % env.get_page_title(gold_traj[-1]))
+            tqdm.write("\t%-40s\t%-40s" % (env._graph.get_article_title(start_id),
+                                           env._graph.get_article_title(pred_id)))
+        tqdm.write("\t%-40s" % env._graph.get_article_title(gold_traj[-1]))
 
     # Write summaries using supervisor.
     summary = tf.Summary()
@@ -185,10 +186,16 @@ def eval(model, env, sv, sm, sess, args):
 
 
 def train(args):
-    # graph = EmbeddedWikiNavGraph(args.wiki_path, args.qp_path, args.emb_path,
-    #                              args.path_length)
-    graph = EmbeddedWikispeediaGraph(args.wiki_path, args.emb_path,
+    if args.data_type == "wikinav":
+        if not args.qp_path:
+            raise ValueError("--qp_path required for wikinav data")
+        graph = EmbeddedWikiNavGraph(args.wiki_path, args.qp_path, args.emb_path,
                                      args.path_length)
+    elif args.data_type == "wikispeedia":
+        graph = EmbeddedWikispeediaGraph(args.wiki_path, args.emb_path,
+                                         args.path_length)
+    else:
+        raise ValueError("Invalid data_type %s" % args.data_type)
 
     env = EmbeddingWebNavEnvironment(args.beam_size, graph, is_training=True)
     eval_env = EmbeddingWebNavEnvironment(args.beam_size, graph,
@@ -218,7 +225,7 @@ def train(args):
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
-    batches_per_epoch = len(env._graph.datasets["train"].paths) / args.batch_size + 1
+    batches_per_epoch = len(env._graph.datasets["train"]) / args.batch_size + 1
     with sv.managed_session() as sess:
         for e in range(args.num_epochs):
             if sv.should_stop():
@@ -287,8 +294,10 @@ if __name__ == "__main__":
     p.add_argument("--summary_interval", default=100, type=int)
     p.add_argument("--n_eval_trajectories", default=5, type=int)
 
+    p.add_argument("--data_type", choices=["wikinav", "wikispeedia"],
+                   default="wikinav")
     p.add_argument("--wiki_path", required=True)
-    p.add_argument("--qp_path", required=True)
+    p.add_argument("--qp_path")
     p.add_argument("--emb_path", required=True)
 
     args = p.parse_args()

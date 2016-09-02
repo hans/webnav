@@ -7,14 +7,14 @@ from collections import namedtuple
 import numpy as np
 
 
-EmbeddedArticle = namedtuple("EmbeddedArticle", ["name", "embedding", "text"])
+EmbeddedArticle = namedtuple("EmbeddedArticle", ["title", "embedding", "text"])
 
 
 class EmbeddedWebGraph(object):
 
     embedding_dim = 128
 
-    def __init__(self, articles, datasets, path_length):
+    def __init__(self, articles, datasets, path_length, stop_sentinel=None):
         self.articles = articles
         self.datasets = datasets
         self.path_length = path_length
@@ -24,7 +24,7 @@ class EmbeddedWebGraph(object):
 
         # Hack: use a random page as the "STOP" sentinel.
         # Works in expectation. :)
-        self.stop_sentinel = np.random.choice(len(self.articles))
+        self.stop_sentinel = stop_sentinel or np.random.choice(len(self.articles))
 
         self._eval_cursor = 0
 
@@ -137,25 +137,41 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
             data = pickle.load(data_f)
         self._data = data
 
-        self.embeddings = np.load(emb_path)["arr_0"]
+        self.embeddings = embeddings = np.load(emb_path)["arr_0"]
+        self.embedding_dim = embeddings.shape[1]
 
-        articles = [EmbeddedArticle(article.name, embeddings[i], article.lead_tokens)
-                    for i, article in enumerate(data.articles)]
-        # datasets = {}
-        # for dataset_name, dataset in data.paths.iteritems():
-        #     paths = []
-        #     for path in dataset:
-        #         # TODO pad
-        #         paths.append(path)
+        articles = [EmbeddedArticle(article["name"], embeddings[i],
+                                    article["lead_tokens"])
+                    for i, article in enumerate(data["articles"])]
 
-        #     datasets[dataset_name] = paths
-        datasets = data.paths
+        # Use a random article as a stop sentinel.
+        # TODO: Probably better to make a dedicated sentinel here, since this
+        # graph is relatively small
+        stop_sentinel = np.random.choice(len(articles))
+
+        datasets = {}
+        for dataset_name, dataset in data["paths"].iteritems():
+            paths, n_skipped = [], 0
+            for path in dataset:
+                if len(path["articles"]) > path_length - 1:
+                    n_skipped += 1
+                    continue
+
+                # Pad with STOP sentinel (every path gets at least one)
+                pad_length = max(0, path_length - len(path["articles"]))
+                path = path["articles"] + [stop_sentinel] * pad_length
+                paths.append(path)
+
+            print "%s set: skipped %i of %i paths due to length limit" \
+                    % (dataset_name, n_skipped, len(dataset))
+            datasets[dataset_name] = paths
 
         super(EmbeddedWikispeediaGraph, self).__init__(articles, datasets,
-                                                       path_length)
+                                                       path_length,
+                                                       stop_sentinel=stop_sentinel)
 
     def get_article_links(self, article_idx):
-        return self._data.links[article_idx]
+        return self._data["links"][article_idx]
 
     def get_query_embeddings(self, paths):
         # Get the last non-STOP page in each corresponding path.
@@ -166,6 +182,5 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
     def get_article_embeddings(self, article_ids):
         return self.embeddings[article_ids]
 
-    def prepare_path(self, path):
-        # TODO
+    def _prepare_path(self, path):
         return path
