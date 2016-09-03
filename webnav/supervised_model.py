@@ -131,7 +131,7 @@ def eval(model, env, sv, sm, sess, args):
         start_page = env.cur_article_ids[sample_idx]
         gold_traj, sampled_traj = [start_page], [start_page]
 
-        while not done:
+        for t in range(args.path_length):
             query, cur_page, beam = observations
 
             feed = {
@@ -154,8 +154,6 @@ def eval(model, env, sv, sm, sess, args):
 
             # Take the gold step.
             observations, dones, _ = env.step_batch(None)
-            t += 1
-            done = dones.all()
 
         losses.append(losses_i)
         gold_trajectories.append(gold_traj)
@@ -252,9 +250,8 @@ def train(args):
                     eval(model, eval_env, sv, sm, sess, args)
 
                 observations = env.reset_batch(args.batch_size)
-                t, done = 0, False
 
-                while not done:
+                for t in range(args.path_length):
                     query, cur_page, beam = observations
 
                     feed = {
@@ -266,15 +263,10 @@ def train(args):
                         feed[model.query] = query
                         feed[model.lengths] = env._lengths
 
-                    do_summary = batch_num % args.summary_interval == 0
-                    summary_fetch = summary_op if do_summary else train_op
-
                     sess.partial_run(sm.partial_handle, model.all_losses[t], feed)
 
                     # Take the gold step.
                     observations, dones, _ = env.step_batch(None)
-                    done = dones.all()
-                    t += 1
 
                 do_summary = i % args.summary_interval == 0
                 summary_fetch = summary_op if do_summary else train_op
