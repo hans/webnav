@@ -115,17 +115,19 @@ def eval(model, env, sv, sm, sess, args):
     losses = []
 
     for i in trange(num_iters, desc="evaluating", leave=True):
-        query, cur_page, beam = env.reset_batch(args.batch_size)
+        observations = env.reset_batch(args.batch_size)
         t, done = 0, False
         losses_i = []
 
         # Sample a trajectory from a random batch element.
-        sample_idx = np.random.choice(query.shape[0])
+        sample_idx = np.random.choice(observations[0].shape[0])
         # (gold, sampled)
         start_page = env.cur_article_ids[sample_idx]
         gold_traj, sampled_traj = [start_page], [start_page]
 
         while not done:
+            query, cur_page, beam = observations
+
             feed = {
                 model.current_node[t]: cur_page,
                 model.candidates[t]: beam,
@@ -145,8 +147,6 @@ def eval(model, env, sv, sm, sess, args):
 
             # Take the gold step.
             observations, dones, _ = env.step_batch(None)
-            query, cur_page, beam = observations
-
             t += 1
             done = dones.all()
 
@@ -243,10 +243,12 @@ def train(args):
                                % (i, e))
                     eval(model, eval_env, sv, sm, sess, args)
 
-                query, cur_page, beam = env.reset_batch(args.batch_size)
+                observations = env.reset_batch(args.batch_size)
                 t, done = 0, False
 
                 while not done:
+                    query, cur_page, beam = observations
+
                     feed = {
                         model.current_node[t]: cur_page,
                         model.candidates[t]: beam,
@@ -262,10 +264,8 @@ def train(args):
 
                     # Take the gold step.
                     observations, dones, _ = env.step_batch(None)
-                    query, cur_page, beam = observations
-
-                    t += 1
                     done = dones.all()
+                    t += 1
 
                 do_summary = i % args.summary_interval == 0
                 summary_fetch = summary_op if do_summary else train_op
