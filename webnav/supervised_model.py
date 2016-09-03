@@ -184,7 +184,6 @@ def eval(model, env, sv, sm, sess, args):
                                            env._graph.get_article_title(pred_id)))
             if start_id == env._graph.stop_sentinel:
                 break
-        tqdm.write("\t%-40s" % env._graph.get_article_title(gold_traj[-1]))
 
     # Write summaries using supervisor.
     summary = tf.Summary()
