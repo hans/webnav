@@ -16,7 +16,8 @@ class EmbeddedWebGraph(object):
 
     def __init__(self, articles, datasets, path_length, stop_sentinel=None):
         self.articles = articles
-        self.datasets = datasets
+        self.datasets = {name: (all_paths, np.array(lengths))
+                         for name, (all_paths, lengths) in datasets.items()}
         self.path_length = path_length
 
         assert "train" in self.datasets
@@ -29,20 +30,23 @@ class EmbeddedWebGraph(object):
         self._eval_cursor = 0
 
     def sample_paths(self, batch_size, is_training=True):
-        dataset = self.datasets["train" if is_training else "valid"]
+        all_paths, lengths = self.datasets["train" if is_training else "valid"]
 
         if is_training:
-            ids = np.random.choice(len(dataset), size=batch_size)
+            ids = np.random.choice(len(all_paths), size=batch_size)
         else:
-            if self._eval_cursor >= len(dataset):
+            if self._eval_cursor >= len(all_paths):
                 self._eval_cursor = 0
             ids = np.arange(self._eval_cursor,
-                            min(len(dataset) - 1,
+                            min(len(all_paths) - 1,
                                 self._eval_cursor + batch_size))
             self._eval_cursor += batch_size
 
-        paths = [self._prepare_path(dataset[idx]) for idx in ids]
-        return ids, paths
+        paths = [self._prepare_path(all_paths[idx]) for idx in ids]
+        return ids, paths, lengths[ids]
+
+    def get_num_paths(self, is_training=True):
+        return len(self.datasets["train" if is_training else "valid"][0])
 
     def get_article_links(self, article_idx):
         raise NotImplementedError
@@ -95,8 +99,8 @@ class EmbeddedWikiNavGraph(EmbeddedWebGraph):
         paths_train, paths_val = data.get_paths(["train", "valid"])
 
         datasets = {
-            "train": paths_train,
-            "valid": paths_val,
+            "train": (paths_train, [len(path[0]) for path in paths_train]),
+            "valid": (paths_valid, [len(path[0]) for path in paths_valid]),
         }
 
         super(EmbeddedWikiNavGraph, self).__init__(articles, datasets,
@@ -151,20 +155,23 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
 
         datasets = {}
         for dataset_name, dataset in data["paths"].iteritems():
-            paths, n_skipped = [], 0
+            paths, original_lengths, n_skipped = [], [], 0
             for path in dataset:
-                if len(path["articles"]) > path_length:
+                if len(path["articles"]) > path_length - 1:
                     n_skipped += 1
                     continue
 
                 # Pad with STOP sentinel (every path gets at least one)
                 pad_length = max(0, path_length + 1 - len(path["articles"]))
+                original_length = len(path["articles"]) + 1
                 path = path["articles"] + [stop_sentinel] * pad_length
+
                 paths.append(path)
+                original_lengths.append(original_length)
 
             print "%s set: skipped %i of %i paths due to length limit" \
                     % (dataset_name, n_skipped, len(dataset))
-            datasets[dataset_name] = paths
+            datasets[dataset_name] = (paths, np.array(original_lengths))
 
         super(EmbeddedWikispeediaGraph, self).__init__(articles, datasets,
                                                        path_length,

@@ -48,11 +48,9 @@ class WebNavEnvironment(Env):
         return self.reset_batch(self, 1)[0]
 
     def reset_batch(self, batch_size):
-        self._ids, self._paths = \
+        self._ids, self._paths, self._lengths = \
                 self._graph.sample_paths(batch_size, self.is_training)
-
-        self._num_hops = np.array([len(path) - 1 for path in self._paths])
-        self._cursors = np.zeros_like(self._num_hops, dtype=np.int32)
+        self._cursors = np.zeros_like(self._lengths, dtype=np.int32)
 
         self._prepare_actions()
         return self._observe_batch()
@@ -75,10 +73,10 @@ class WebNavEnvironment(Env):
             try:
                 gold_next_id = path[cursor + 1]
             except IndexError:
-                # We are at the end of this path and ready to quit. No need to
-                # prepare a beam.
-                candidates.append(None)
-                ys.append(None)
+                # We are at the end of this path and ready to quit. Prepare a
+                # dummy beam that won't have any effect.
+                candidates.append([self._dummy_page] * self.beam_size)
+                ys.append(0)
                 continue
 
             ids = self._graph.get_article_links(cur_id)
@@ -140,11 +138,8 @@ class WebNavEnvironment(Env):
         # Prepare action beam for the following timestep.
         self._prepare_actions()
 
-        dones = self._cursors >= self._num_hops
-        if not dones.all():
-            observations = self._observe_batch()
-        else:
-            observations = None
+        dones = self._cursors >= self._lengths
+        observations = self._observe_batch()
 
         return observations, dones, rewards
 

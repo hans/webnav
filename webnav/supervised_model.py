@@ -16,7 +16,7 @@ from webnav.web_graph import EmbeddedWikispeediaGraph
 
 
 AgentModel = namedtuple("AgentModel",
-        ["num_candidates", "ys",
+        ["num_candidates", "ys", "lengths",
          "current_node", "query", "candidates",
          "scores", "all_losses", "loss"])
 
@@ -40,9 +40,13 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
         if cells is None:
             cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
 
-        # Recurrent versions of the inputs in `build_model`
+        # Gold actions at each timestep
         ys = [tf.placeholder(tf.int32, shape=(None,), name="ys_%i" % t)
                              for t in range(num_timesteps)]
+        # TODO: Will need to replace this with simple per-timestep "is_done"
+        # mask when we go perceptron
+        rollout_lengths = tf.placeholder(tf.int32, shape=(None,),
+                                         name="lengths")
         current_nodes = [tf.placeholder(tf.float32,
                                         shape=(None, embedding_dim),
                                         name="current_node_%i" % t)
@@ -86,12 +90,14 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
         losses = [tf.nn.sparse_softmax_cross_entropy_with_logits(
                         scores_t, ys_t)
                   for scores_t, ys_t in zip(scores, ys)]
+        losses = [tf.to_float(i < rollout_lengths) * loss_t
+                  for i, loss_t in enumerate(losses)]
         losses = [tf.reduce_mean(loss_t) for loss_t in losses]
         loss = tf.add_n(losses) / float(len(losses))
 
         tf.scalar_summary("loss", loss)
 
-    return AgentModel(None, ys,
+    return AgentModel(None, ys, rollout_lengths,
                       current_nodes, query, candidates,
                       scores, losses, loss)
 
@@ -110,7 +116,7 @@ def eval(model, env, sv, sm, sess, args):
     """
 
     assert not env.is_training
-    num_iters = len(env._graph.datasets["valid"]) / args.batch_size + 1
+    num_iters = env._graph.get_num_paths(False) / args.batch_size + 1
     gold_trajectories, trajectories = [], []
     losses = []
 
@@ -135,6 +141,7 @@ def eval(model, env, sv, sm, sess, args):
             }
             if t == 0:
                 feed[model.query] = query
+                feed[model.lengths] = env._lengths
 
             fetch = [model.all_losses[t], model.scores[t]]
             loss, scores = sess.partial_run(sm.partial_handle, fetch, feed)
@@ -222,11 +229,11 @@ def train(args):
             partial_fetches=model.scores + model.all_losses + \
                     [train_op, summary_op, model.loss],
             partial_feeds=model.current_node + model.candidates + \
-                    model.ys + [model.query])
+                    model.ys + [model.query, model.lengths])
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
-    batches_per_epoch = len(env._graph.datasets["train"]) / args.batch_size + 1
+    batches_per_epoch = env._graph.get_num_paths(True) / args.batch_size + 1
     with sv.managed_session() as sess:
         for e in range(args.num_epochs):
             if sv.should_stop():
@@ -256,6 +263,7 @@ def train(args):
                     }
                     if t == 0:
                         feed[model.query] = query
+                        feed[model.lengths] = env._lengths
 
                     do_summary = batch_num % args.summary_interval == 0
                     summary_fetch = summary_op if do_summary else train_op
