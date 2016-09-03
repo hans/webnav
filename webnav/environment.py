@@ -132,15 +132,19 @@ class WebNavEnvironment(Env):
                     reward=rewards[0])
 
     def step_batch(self, actions):
+        rewards = self._reward_batch(actions)
+
         # Only supports oracle case. Just follow the gold path.
         self._cursors += 1
 
-        observations = self._observe_batch()
-        dones = self._cursors >= self._num_hops
-        rewards = self._reward_batch(actions)
-
         # Prepare action beam for the following timestep.
         self._prepare_actions()
+
+        dones = self._cursors >= self._num_hops
+        if not dones.all():
+            observations = self._observe_batch()
+        else:
+            observations = None
 
         return observations, dones, rewards
 

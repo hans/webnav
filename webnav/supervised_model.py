@@ -74,12 +74,13 @@ def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
             hid_vals.append(hid_t)
 
             # Use top hidden layer to calculate scores.
-            last_hidden = hid_t[-1][0]
+            last_out = inp
             if cells[-1].output_size != embedding_dim:
-                last_hidden = layers.fully_connected(last_hidden,
-                        embedding_dim, scope="state_projection")
+                last_out = layers.fully_connected(last_out,
+                        embedding_dim, activation_fn=tf.tanh,
+                        scope="state_projection")
 
-            scores_t = score_beam(last_hidden, candidates[t])
+            scores_t = score_beam(last_out, candidates[t])
             scores.append(scores_t)
 
         losses = [tf.nn.sparse_softmax_cross_entropy_with_logits(
