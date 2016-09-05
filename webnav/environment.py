@@ -14,7 +14,16 @@ class WebNavEnvironment(Env):
     abstract.
     """
 
-    def __init__(self, beam_size, graph, is_training=True, *args, **kwargs):
+    def __init__(self, beam_size, graph, is_training=True, oracle=True,
+                 *args, **kwargs):
+        """
+        Args:
+            beam_size:
+            graph:
+            is_training:
+            oracle: If True, always follow the gold path regardless of
+                provided agent actions.
+        """
         super(WebNavEnvironment, self).__init__(*args, **kwargs)
 
         self._graph = graph
@@ -30,9 +39,7 @@ class WebNavEnvironment(Env):
         self.beam_size = beam_size
         self.path_length = self._graph.path_length
         self.is_training = is_training
-
-        if not is_training:
-            self._eval_cursor = 0
+        self.oracle = oracle
 
         self._action_space = Discrete(self.beam_size + 1)
 
@@ -57,14 +64,64 @@ class WebNavEnvironment(Env):
 
     @property
     def cur_article_ids(self):
-        return [path[idx] if idx < len(path) else None
-                for path, idx in zip(self._paths, self._cursors)]
+        if self.oracle:
+            return [path[idx] if idx < len(path) else None
+                    for path, idx in zip(self._paths, self._cursors)]
+        else:
+            return self._cur_article_ids
 
-    def _get_candidate_beams(self):
+    def _get_candidates(self):
+        """
+        For each example, build a beam of candidate next-page IDs consisting of
+        available links on the corresponding current article.
+
+        NB: The candidate lists returned may have a regular pattern, e.g. the
+        stop sentinel / filler candidates (for candidate lists which are smaller
+        than the beam size) may always be in the same position in the list.
+        Make sure to not build models (e.g. ones with output biases) that might
+        capitalize on this pattern.
+
+        Returns:
+            candidates: List of lists of article IDs, each sublist of length
+                `self.beam_size`.
+        """
+        candidates = []
+        for article_id in self.cur_article_ids:
+            all_links = self._graph.get_article_links(article_id)
+
+            # Sample `beam_size - 1`; add the STOP sentinel
+            links = random.sample(all_links, min(self.beam_size - 1,
+                                                 len(all_links)))
+            links.append(self.stop_sentinel)
+
+            if len(links) < self.beam_size:
+                links.extend([self._dummy_page] * (self.beam_size - len(links)))
+
+            candidates.append(links)
+
+        return candidates
+
+    def _get_oracle_candidates(self):
         """
         For each example, build a beam of candidate next-page IDs consisting of
         the valid solution and other negatively-sampled candidate links on the
         page.
+
+        NB: The candidate lists returned may have a regular pattern, e.g. the
+        stop sentinel / filler candidates (for candidate lists which are smaller
+        than the beam size) may always be in the same position in the list.
+        Make sure to not build models (e.g. ones with output biases) that might
+        capitalize on this pattern.
+
+        Returns:
+            candidates: List of lists of article IDs, each sublist of length
+                `self.beam_size`. Each list is guaranteed to contain 1) the
+                gold next page according to the oracle trajectory and 2) the
+                stop sentinel. (Note that these two will make up just one
+                candidate if the valid next action is to stop.)
+            ys: List of integers, one for each sublist of `candidates`.
+                Indicates the position of the gold action in the corresponding
+                sublist.
         """
         candidates, ys = [], []
         for cursor, path in zip(self._cursors, self._paths):
@@ -112,12 +169,12 @@ class WebNavEnvironment(Env):
         """
         Compute the available actions for each example in the current batch.
         """
-        # Only supports supervised / oracle case right now, where trajectory
-        # history always follows the gold path
-        beams, gold_actions = self._get_candidate_beams()
+        if self.oracle:
+            beams, self.gold_actions = self._get_oracle_candidates()
+        else:
+            beams = self._get_candidates()
 
         self._beams = np.array(beams)
-        self.gold_actions = gold_actions
 
     def get_page_for_action(self, example_idx, action):
         return self._beams[example_idx, action] \
@@ -132,8 +189,11 @@ class WebNavEnvironment(Env):
     def step_batch(self, actions):
         rewards = self._reward_batch(actions)
 
-        # Only supports oracle case. Just follow the gold path.
-        self._cursors += 1
+        if self.oracle:
+            self._cursors += 1
+        else:
+            self._cur_page_ids = self._beams[np.arange(self.beams.shape[0]),
+                                             actions]
 
         # Prepare action beam for the following timestep.
         self._prepare_actions()
