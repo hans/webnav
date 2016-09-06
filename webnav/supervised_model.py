@@ -11,94 +11,42 @@ from tqdm import tqdm, trange
 
 from webnav import web_graph
 from webnav.environment import EmbeddingWebNavEnvironment
+from webnav.rnn_model import rnn_model
 from webnav.session import PartialRunSessionManager
 
 
-AgentModel = namedtuple("AgentModel",
-        ["num_candidates", "ys", "lengths",
-         "current_node", "query", "candidates",
-         "scores", "all_losses", "loss"])
+SupervisedAgent = namedtuple("SupervisedAgent",
+                             ["current_node", "query", "candidates",
+                              "scores",
+                              "ys", "lengths",
+                              "all_losses", "loss"])
 
 
-def score_beam(state, candidates):
-    embedding_dim = state.get_shape().as_list()[-1]
-    num_candidates = candidates.get_shape().as_list()[1]
+def supervised_model(beam_size, num_timesteps, embedding_dim, name="model"):
+    rnn_inputs, rnn_outputs = rnn_model(beam_size, num_timesteps,
+                                        embedding_dim, name=name)
+    current_node, query, candidates = rnn_inputs
+    scores, = rnn_outputs
 
-    # Calculate score for each candidate (batched dot product)
-    # batch_size * beam_size
-    scores = tf.reshape(tf.batch_matmul(candidates,
-                                        tf.expand_dims(state, 2)),
-                        (-1, num_candidates))
+    # Real length of each path (used to weight sequence cost).
+    rollout_lengths = tf.placeholder(tf.int32, (None,), name="lengths")
+    # Gold actions at each timestep
+    ys = [tf.placeholder(tf.int32, (None,), name="y%i" % t)
+          for t in range(num_timesteps)]
 
-    return scores
+    losses = [tf.nn.sparse_softmax_cross_entropy_with_logits(scores_t, ys_t)
+              for scores_t, ys_t in zip(scores, ys)]
+    losses = [tf.to_float(i < rollout_lengths) * loss_t
+              for i, loss_t in enumerate(losses)]
+    losses = [tf.reduce_mean(loss_t) for loss_t in losses]
+    loss = tf.add_n(losses) / float(len(losses))
 
+    tf.scalar_summary("loss", loss)
 
-def build_recurrent_model(beam_size, num_timesteps, embedding_dim,
-                          cells=None, name="model"):
-    with tf.variable_scope(name):
-        if cells is None:
-            cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
-
-        # Gold actions at each timestep
-        ys = [tf.placeholder(tf.int32, shape=(None,), name="ys_%i" % t)
-                             for t in range(num_timesteps)]
-        # TODO: Will need to replace this with simple per-timestep "is_done"
-        # mask when we go perceptron
-        rollout_lengths = tf.placeholder(tf.int32, shape=(None,),
-                                         name="lengths")
-        current_nodes = [tf.placeholder(tf.float32,
-                                        shape=(None, embedding_dim),
-                                        name="current_node_%i" % t)
-                         for t in range(num_timesteps)]
-        # Embedding of the query (pre-computed).
-        query = tf.placeholder(tf.float32, shape=(None, embedding_dim),
-                name="query")
-        # Embedding of all candidates on the beam (pre-computed).
-        candidates = [tf.placeholder(tf.float32,
-                                     shape=(None, beam_size, embedding_dim),
-                                     name="candidates_%i" % t)
-                      for t in range(num_timesteps)]
-
-        # Run stacked RNN.
-        batch_size = tf.shape(current_nodes[0])[0]
-        hid_vals = [[cell.zero_state(batch_size, tf.float32)
-                     for cell in cells]]
-        scores = []
-        for t in range(num_timesteps):
-            if t > 0: tf.get_variable_scope().reuse_variables()
-
-            inp = tf.concat(1, [current_nodes[t], query])
-            hid_prev_t = hid_vals[-1]
-            hid_t = []
-            for i, (cell, hid_prev) in enumerate(zip(cells, hid_prev_t)):
-                inp, hid_t_i = cell(inp, hid_prev, scope="layer%i" % i)
-                hid_t.append(hid_t_i)
-
-            hid_vals.append(hid_t)
-
-            # Use top hidden layer to calculate scores.
-            last_out = inp
-            if cells[-1].output_size != embedding_dim:
-                last_out = layers.fully_connected(last_out,
-                        embedding_dim, activation_fn=tf.tanh,
-                        scope="state_projection")
-
-            scores_t = score_beam(last_out, candidates[t])
-            scores.append(scores_t)
-
-        losses = [tf.nn.sparse_softmax_cross_entropy_with_logits(
-                        scores_t, ys_t)
-                  for scores_t, ys_t in zip(scores, ys)]
-        losses = [tf.to_float(i < rollout_lengths) * loss_t
-                  for i, loss_t in enumerate(losses)]
-        losses = [tf.reduce_mean(loss_t) for loss_t in losses]
-        loss = tf.add_n(losses) / float(len(losses))
-
-        tf.scalar_summary("loss", loss)
-
-    return AgentModel(None, ys, rollout_lengths,
-                      current_nodes, query, candidates,
-                      scores, losses, loss)
+    return SupervisedAgent(current_node, query, candidates,
+                           scores,
+                           ys, rollout_lengths,
+                           losses, loss)
 
 
 def eval(model, env, sv, sm, sess, args):
@@ -213,8 +161,8 @@ def train(args):
     eval_env = EmbeddingWebNavEnvironment(args.beam_size, graph,
                                           is_training=False)
 
-    model = build_recurrent_model(args.beam_size, args.path_length,
-                                  env.embedding_dim)
+    model = supervised_model(args.beam_size, args.path_length,
+                             env.embedding_dim)
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)
