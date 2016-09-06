@@ -46,18 +46,22 @@ def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
 
     # Calculate Q targets.
     q_targets = []
-    q_pred = [tf.reduce_max(scores_t, 1) for scores_t in scores]
+    q_a_pred = [tf.reduce_max(scores_t, 1) for scores_t in scores]
     for t in range(num_timesteps):
         target = rewards[t]
         if t < num_timesteps - 1:
             # Bootstrap with max_a Q_{t+1}
-            target += gamma * q_pred[t + 1]
+            target += gamma * q_a_pred[t + 1]
 
         q_targets.append(target)
 
-    losses = [tf.reduce_mean(tf.square(mask_t * (q_target_t - q_pred_t)))
+        scores_mean, scores_var = tf.nn.moments(scores[t], [0, 1])
+        tf.scalar_summary("q_pred_%i/mean", scores_mean)
+        tf.scalar_summary("q_pred_%i/var", scores_var)
+
+    losses = [tf.reduce_mean(tf.square(mask_t * (q_target_t - q_a_pred_t)))
               for q_target_t, q_pred_t, mask_t
-              in zip(q_targets, q_pred, masks)]
+              in zip(q_targets, q_a_pred, masks)]
     loss = tf.add_n(losses) / float(len(losses))
 
     tf.scalar_summary("loss", loss)
