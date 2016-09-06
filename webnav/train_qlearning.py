@@ -56,11 +56,11 @@ def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
         q_targets.append(target)
 
         scores_mean, scores_var = tf.nn.moments(scores[t], [0, 1])
-        tf.scalar_summary("q_pred_%i/mean", scores_mean)
-        tf.scalar_summary("q_pred_%i/var", scores_var)
+        tf.scalar_summary("q_pred_%i/mean" % t, scores_mean)
+        tf.scalar_summary("q_pred_%i/var" % t, scores_var)
 
     losses = [tf.reduce_mean(tf.square(mask_t * (q_target_t - q_a_pred_t)))
-              for q_target_t, q_pred_t, mask_t
+              for q_target_t, q_a_pred_t, mask_t
               in zip(q_targets, q_a_pred, masks)]
     loss = tf.add_n(losses) / float(len(losses))
 
@@ -85,7 +85,8 @@ def train(args):
     else:
         raise ValueError("Invalid data_type %s" % args.data_type)
 
-    env = EmbeddingWebNavEnvironment(args.beam_size, graph, is_training=True)
+    env = EmbeddingWebNavEnvironment(args.beam_size, graph, is_training=True,
+                                     oracle=False)
 
     model = q_model(args.beam_size, args.path_length, env.embedding_dim,
                     args.gamma)

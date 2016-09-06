@@ -216,20 +216,46 @@ class BatchNavigator(object):
         """
         Prepare a new navigation batch with the given parameters.
         """
+        # TODO: Sample outside of the training set.
         self._ids, self._paths, self._lengths = \
                 self.graph.sample_paths(batch_size, is_training)
         self._cur_article_ids = [path[0] for path in self._paths]
+
+        self._targets = np.array([path[length - 2] for path, length
+                                  in zip(self._paths, self._lengths)])
+        self._on_target = np.array([False] * len(self._ids))
+        self._successes = np.array([False] * len(self._ids))
+
         self._num_steps = 0
+        self._reset(batch_size, is_training)
         self._prepare()
+
+    def _reset(self, batch_size, is_training):
+        # For subclasses.
+        pass
 
     def step(self, actions):
         """
         Make a navigation step with the given actions.
         """
-        self._cur_article_ids = self._beams[np.arange(self.beams.shape[0]),
-                                            actions]
+        self._step(actions)
+
+        # Did we just stop at the target page?
+        stopped_at_target = np.logical_and(self._on_target,
+                                           actions == self.graph.stop_sentinel)
+        self._successes = np.logical_or(self._successes, stopped_at_target)
+        self._on_target = self.cur_article_ids == self._targets
+
         self._num_steps += 1
         self._prepare()
+
+    def _step(self, actions):
+        """
+        For subclasses. Modify state using `actions`. Metadata handled by this
+        superclass.
+        """
+        self._cur_article_ids = self._beams[np.arange(self._beams.shape[0]),
+                                            actions]
 
     @property
     def cur_article_ids(self):
@@ -258,6 +284,14 @@ class BatchNavigator(object):
         """
         done = self._num_steps < self.path_length
         return [done] * len(self._ids)
+
+    @property
+    def successes(self):
+        """
+        Return a boolean for each example indicating whether it has
+        successfully reached the target.
+        """
+        return self._successes
 
     def get_article_for_action(self, example_idx, action):
         """
@@ -307,21 +341,19 @@ class BatchNavigator(object):
 
 class OracleBatchNavigator(BatchNavigator):
 
-    def reset(self, batch_size, is_training):
-        self._ids, self._paths, self._lengths = \
-                self.graph.sample_paths(batch_size, is_training)
+    def _reset(self, batch_size, is_training):
         self._cursors = np.zeros_like(self._lengths, dtype=np.int32)
-        self._prepare()
 
-    def step(self, actions):
+    def _step(self, actions):
         # Ignore the actions; we are following gold paths.
         self._cursors += 1
 
     @property
     def cur_article_ids(self):
-        return [path[idx] if idx < length else self.graph.stop_sentinel
-                for idx, (path, length)
-                in enumerate(zip(self._paths, self._lengths))]
+        return np.array([path[idx] if idx < length
+                         else self.graph.stop_sentinel
+                         for idx, (path, length)
+                         in enumerate(zip(self._paths, self._lengths))])
 
     @property
     def gold_actions(self):

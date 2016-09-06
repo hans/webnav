@@ -78,10 +78,10 @@ class WebNavEnvironment(Env):
                     reward=rewards[0])
 
     def step_batch(self, actions):
-        rewards = self._reward_batch(actions)
-
         # Take the step in graph-space!
         self._navigator.step(actions)
+
+        rewards = self._reward_batch(actions)
 
         return self._observe_batch(), self._navigator.dones, rewards
 
@@ -145,5 +145,4 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
                 beam_embeddings
 
     def _reward_batch(self, actions):
-        # TODO make smart
-        return [0.0] * len(actions)
+        return self._navigator.successes.astype(np.float32)
