@@ -145,5 +145,5 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
                 beam_embeddings
 
     def _reward_batch(self, actions):
-        # Ignore in supervised implementation for now.
-        pass
+        # TODO make smart
+        return [0.0] * len(actions)
