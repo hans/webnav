@@ -3,6 +3,7 @@ Defines a common web graph navigation interface to WikiNav, Wikispeedia, etc.
 """
 
 from collections import namedtuple
+import random
 
 import numpy as np
 
@@ -191,3 +192,208 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
 
     def _prepare_path(self, path):
         return path
+
+
+class BatchNavigator(object):
+
+    def __init__(self, graph, beam_size, path_length):
+        self.graph = graph
+        self.beam_size = beam_size
+        self.path_length = path_length
+
+        # Hack: use a random page as a dummy page which will fill up beams
+        # which are too small.
+        # Works in expectation. :)
+        self._dummy_page = np.random.choice(len(self.graph.articles))
+
+        assert self._dummy_page != self.graph.stop_sentinel, \
+                "A very improbable event has occurred. Please restart."
+
+        self._ids, self._paths, self._lengths = None, None, None
+        self._beams = None
+
+    def reset(self, batch_size, is_training):
+        """
+        Prepare a new navigation batch with the given parameters.
+        """
+        self._ids, self._paths, self._lengths = \
+                self.graph.sample_paths(batch_size, is_training)
+        self._cur_article_ids = [path[0] for path in self._paths]
+        self._num_steps = 0
+        self._prepare()
+
+    def step(self, actions):
+        """
+        Make a navigation step with the given actions.
+        """
+        self._cur_article_ids = self._beams[np.arange(self.beams.shape[0]),
+                                            actions]
+        self._num_steps += 1
+        self._prepare()
+
+    @property
+    def cur_article_ids(self):
+        return self._cur_article_ids
+
+    @property
+    def gold_actions(self):
+        """
+        Return the gold navigation actions for the current state.
+        """
+        raise RuntimeError("Gold actions not defined for this navigator!")
+
+    @property
+    def gold_path_lengths(self):
+        """
+        Return length of un-padded version of gold path (including stop
+        sentinel).
+        """
+        raise RuntimeError("Gold paths not defined for this navigator!")
+
+    @property
+    def dones(self):
+        """
+        Return a boolean for each example indicating whether the traversal has
+        finished.
+        """
+        done = self._num_steps < self.path_length
+        return [done] * len(self._ids)
+
+    def get_article_for_action(self, example_idx, action):
+        """
+        Get the article ID corresponding to an action ID in a particular
+        example.
+        """
+        return self._beams[example_idx, action]
+
+    def _get_candidates(self):
+        """
+        For each example, build a beam of candidate next-page IDs consisting of
+        available links on the corresponding current article.
+
+        NB: The candidate lists returned may have a regular pattern, e.g. the
+        stop sentinel / filler candidates (for candidate lists which are smaller
+        than the beam size) may always be in the same position in the list.
+        Make sure to not build models (e.g. ones with output biases) that might
+        capitalize on this pattern.
+
+        Returns:
+            candidates: List of lists of article IDs, each sublist of length
+                `self.beam_size`.
+        """
+        candidates = []
+        for article_id in self._cur_article_ids:
+            all_links = self.graph.get_article_links(article_id)
+
+            # Sample `beam_size - 1`; add the STOP sentinel
+            links = random.sample(all_links, min(self.beam_size - 1,
+                                                 len(all_links)))
+            links.append(self.graph.stop_sentinel)
+
+            if len(links) < self.beam_size:
+                links.extend([self._dummy_page] * (self.beam_size - len(links)))
+
+            candidates.append(links)
+
+        return candidates
+
+    def _prepare(self):
+        """
+        Prepare/update information about the current navigator state.
+        Should be called after reset / steps are taken.
+        """
+        self._beams = np.array(self._get_candidates())
+
+
+class OracleBatchNavigator(BatchNavigator):
+
+    def reset(self, batch_size, is_training):
+        self._ids, self._paths, self._lengths = \
+                self.graph.sample_paths(batch_size, is_training)
+        self._cursors = np.zeros_like(self._lengths, dtype=np.int32)
+        self._prepare()
+
+    def step(self, actions):
+        # Ignore the actions; we are following gold paths.
+        self._cursors += 1
+
+    @property
+    def cur_article_ids(self):
+        return [path[idx] if idx < length else self.graph.stop_sentinel
+                for idx, (path, length)
+                in enumerate(zip(self._paths, self._lengths))]
+
+    @property
+    def gold_actions(self):
+        return self._gold_actions
+
+    @property
+    def gold_path_lengths(self):
+        return self._lengths
+
+    @property
+    def dones(self):
+        return self._cursors >= self._lengths
+
+    def _get_candidates(self):
+        """
+        For each example, build a beam of candidate next-page IDs consisting of
+        the valid solution and other negatively-sampled candidate links on the
+        page.
+
+        NB: The candidate lists returned may have a regular pattern, e.g. the
+        stop sentinel / filler candidates (for candidate lists which are smaller
+        than the beam size) may always be in the same position in the list.
+        Make sure to not build models (e.g. ones with output biases) that might
+        capitalize on this pattern.
+
+        Returns:
+            candidates: List of lists of article IDs, each sublist of length
+                `self.beam_size`. Each list is guaranteed to contain 1) the
+                gold next page according to the oracle trajectory and 2) the
+                stop sentinel. (Note that these two will make up just one
+                candidate if the valid next action is to stop.)
+        """
+        candidates, ys = [], []
+        for cursor, path in zip(self._cursors, self._paths):
+            cur_id = path[cursor]
+            # Retrieve gold next-page choice for this example
+            try:
+                gold_next_id = path[cursor + 1]
+            except IndexError:
+                # We are at the end of this path and ready to quit. Prepare a
+                # dummy beam that won't have any effect.
+                candidates.append([self._dummy_page] * self.beam_size)
+                ys.append(0)
+                continue
+
+            ids = self.graph.get_article_links(cur_id)
+            ids = [int(x) for x in ids if x != gold_next_id]
+
+            # Beam must be large enough to hold gold + STOP + a distractor
+            assert self.beam_size >= 3
+            gold_is_stop = gold_next_id == self.graph.stop_sentinel
+
+            # Number of distractors to sample
+            sample_size = self.beam_size - 1 if gold_is_stop \
+                    else self.beam_size - 2
+
+            if len(ids) > sample_size:
+                ids = random.sample(ids, sample_size)
+            if len(ids) < sample_size:
+                ids += [self._dummy_page] * (sample_size - len(ids))
+
+            # Add the gold page.
+            ids = [gold_next_id] + ids
+            if not gold_is_stop:
+                ids += [self.graph.stop_sentinel]
+            random.shuffle(ids)
+
+            assert len(ids) == self.beam_size
+
+            candidates.append(ids)
+            ys.append(ids.index(gold_next_id))
+
+        self._gold_actions = ys
+        return candidates
+

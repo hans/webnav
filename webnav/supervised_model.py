@@ -9,10 +9,9 @@ import tensorflow as tf
 from tensorflow.contrib.layers import layers
 from tqdm import tqdm, trange
 
+from webnav import web_graph
 from webnav.environment import EmbeddingWebNavEnvironment
 from webnav.session import PartialRunSessionManager
-from webnav.web_graph import EmbeddedWikiNavGraph
-from webnav.web_graph import EmbeddedWikispeediaGraph
 
 
 AgentModel = namedtuple("AgentModel",
@@ -120,6 +119,9 @@ def eval(model, env, sv, sm, sess, args):
     gold_trajectories, trajectories = [], []
     losses = []
 
+    navigator = env._navigator
+    assert isinstance(navigator, web_graph.OracleBatchNavigator)
+
     for i in trange(num_iters, desc="evaluating", leave=True):
         observations = env.reset_batch(args.batch_size)
         t, done = 0, False
@@ -141,7 +143,7 @@ def eval(model, env, sv, sm, sess, args):
             }
             if t == 0:
                 feed[model.query] = query
-                feed[model.lengths] = env._lengths
+                feed[model.lengths] = env.gold_path_lengths
 
             fetch = [model.all_losses[t], model.scores[t]]
             loss, scores = sess.partial_run(sm.partial_handle, fetch, feed)
@@ -149,8 +151,10 @@ def eval(model, env, sv, sm, sess, args):
 
             # Just sample one batch element
             a_pred = scores[sample_idx].argmax()
-            gold_traj.append(env._paths[sample_idx][env._cursors[sample_idx] + 1])
-            sampled_traj.append(env.get_page_for_action(sample_idx, a_pred))
+            gold_traj.append(
+                    navigator._paths[sample_idx][navigator._cursors[sample_idx] + 1])
+            sampled_traj.append(
+                    navigator.get_article_for_action(sample_idx, a_pred))
 
             # Take the gold step.
             observations, dones, _ = env.step_batch(None)
@@ -196,11 +200,12 @@ def train(args):
     if args.data_type == "wikinav":
         if not args.qp_path:
             raise ValueError("--qp_path required for wikinav data")
-        graph = EmbeddedWikiNavGraph(args.wiki_path, args.qp_path, args.emb_path,
-                                     args.path_length)
+        graph = web_graph.EmbeddedWikiNavGraph(args.wiki_path, args.qp_path,
+                                               args.emb_path, args.path_length)
     elif args.data_type == "wikispeedia":
-        graph = EmbeddedWikispeediaGraph(args.wiki_path, args.emb_path,
-                                         args.path_length)
+        graph = web_graph.EmbeddedWikispeediaGraph(args.wiki_path,
+                                                   args.emb_path,
+                                                   args.path_length)
     else:
         raise ValueError("Invalid data_type %s" % args.data_type)
 
@@ -261,7 +266,7 @@ def train(args):
                     }
                     if t == 0:
                         feed[model.query] = query
-                        feed[model.lengths] = env._lengths
+                        feed[model.lengths] = env.gold_path_lengths
 
                     sess.partial_run(sm.partial_handle, model.all_losses[t], feed)
 
