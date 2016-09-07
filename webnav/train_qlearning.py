@@ -72,6 +72,104 @@ def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
                    losses, loss)
 
 
+def eval(model, env, sv, sm, sess, args):
+    """
+    Evaluate the given model on a test environment and log detailed results.
+
+    Args:
+        model:
+        env:
+        sv: Supervisor
+        sm: SessionManager (for partial runs)
+        sess: Session
+        args:
+    """
+
+    assert not env.is_training
+    trajectories, losses = [], []
+    navigator = env._navigator
+
+    # Per-timestep loss accumulator.
+    per_timestep_losses = np.zeros((args.path_length,))
+    total_returns = 0.0
+
+    for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
+        observations = env.reset_batch(args.batch_size)
+        masks_t = [1.0] * args.batch_size
+        rewards, masks = [], []
+
+        # Sample a trajectory from a random batch element.
+        sample_idx = np.random.choice(observations[0].shape[0])
+        traj = [env.cur_article_ids[sample_idx]]
+
+        for t in range(args.path_length):
+            query, cur_page, beam = observations
+
+            feed = {
+                model.current_node[t]: cur_page,
+                model.candidates[t]: beam,
+                model.masks[t]: masks_t,
+            }
+            if t == 0:
+                feed[model.query] = query
+
+            fetch = [model.all_losses[t], model.scores[t]]
+            scores_t = sess.partial_run(sm.partial_handle, model.scores[t],
+                                        feed)
+            actions = scores_t.argmax(axis=1)
+
+            # Track our single batch element
+            if masks_t[sample_idx] > 0.0:
+                traj.append(navigator.get_article_for_action(sample_idx,
+                                                             actions[sample_idx]))
+
+            observations, masks_t, rewards_t = env.step_batch(actions)
+            rewards.append(rewards_t)
+            masks.append(masks_t)
+
+        # Compute Q-learning loss.
+        fetches = model.all_losses
+        feeds = {model.rewards[t]: rewards_t
+                 for t, rewards_t in enumerate(rewards)}
+        losses_i = sess.partial_run(sm.partial_handle, fetches, feeds)
+
+        # Accumulate.
+        per_timestep_losses += losses_i
+        total_returns += np.array(rewards).sum(axis=0).mean()
+        trajectories.append(traj)
+
+        sm.reset_partial_handle(sess)
+
+    per_timestep_losses /= float(args.n_eval_iters)
+    total_returns /= float(args.n_eval_iters)
+
+    loss = per_timestep_losses.mean()
+    tqdm.write("Validation loss: %.10f" % loss)
+
+    tqdm.write("Per-timestep validation losses:\n%s\n"
+               % "\n".join("\t% 2i: %.10f" % (t, loss_t)
+                           for t, loss_t in enumerate(per_timestep_losses)))
+
+    # Log random trajectories
+    for traj in trajectories:
+        tqdm.write("Trajectory:")
+        for article_id in traj:
+            # NB: Assumes traj with oracle
+            tqdm.write("\t%-40s" % env._graph.get_article_title(article_id))
+            if article_id == env._graph.stop_sentinel:
+                break
+
+    # Write summaries using supervisor.
+    summary = tf.Summary()
+    summary.value.add(tag="eval/loss", simple_value=np.asscalar(loss))
+    summary.value.add(tag="eval/mean_reward",
+                      simple_value=np.asscalar(total_returns))
+    for t, loss_t in enumerate(per_timestep_losses):
+        summary.value.add(tag="eval/loss_t%i" % t,
+                          simple_value=np.asscalar(loss_t))
+    sv.summary_computed(sess, summary)
+
+
 def train(args):
     if args.data_type == "wikinav":
         if not args.qp_path:
@@ -87,6 +185,8 @@ def train(args):
 
     env = EmbeddingWebNavEnvironment(args.beam_size, graph, is_training=True,
                                      oracle=False)
+    eval_env = EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                          is_training=False, oracle=False)
 
     model = q_model(args.beam_size, args.path_length, env.embedding_dim,
                     args.gamma)
@@ -114,7 +214,7 @@ def train(args):
 
     batches_per_epoch = env._graph.get_num_paths(True) / args.batch_size + 1
     with sv.managed_session() as sess:
-        for e in range(args.num_epochs):
+        for e in range(args.n_epochs):
             if sv.should_stop():
                 break
 
@@ -123,11 +223,11 @@ def train(args):
                     break
 
                 batch_num = i + e * batches_per_epoch
-                # if batch_num % args.eval_interval == 0:
-                #     tqdm.write("============================\n"
-                #                "Evaluating at batch %i, epoch %i"
-                #                % (i, e))
-                #     eval(model, eval_env, sv, sm, sess, args)
+                if batch_num % args.eval_interval == 0:
+                    tqdm.write("============================\n"
+                               "Evaluating at batch %i, epoch %i"
+                               % (i, e))
+                    eval(model, eval_env, sv, sm, sess, args)
 
                 observations = env.reset_batch(args.batch_size)
                 mask_t = [1.0] * args.batch_size
@@ -180,7 +280,8 @@ if __name__ == "__main__":
     p.add_argument("--learning_rate", default=0.001, type=float)
     p.add_argument("--gamma", default=0.99, type=float)
 
-    p.add_argument("--num_epochs", default=3, type=int)
+    p.add_argument("--n_epochs", default=3, type=int)
+    p.add_argument("--n_eval_iters", default=2, type=int)
 
     p.add_argument("--logdir", default="/tmp/webnav_supervised")
     p.add_argument("--eval_interval", default=100, type=int)
