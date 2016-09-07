@@ -6,6 +6,7 @@ Train a web navigation agent purely via Q-learning RL.
 import argparse
 from collections import namedtuple
 from functools import partial
+import os
 import pprint
 import random
 
@@ -84,7 +85,7 @@ def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
                    losses, loss)
 
 
-def eval(model, env, sv, sm, sess, args):
+def eval(model, env, sv, sm, sess, log_f, args):
     """
     Evaluate the given model on a test environment and log detailed results.
 
@@ -94,6 +95,7 @@ def eval(model, env, sv, sm, sess, args):
         sv: Supervisor
         sm: SessionManager (for partial runs)
         sess: Session
+        log_f:
         args:
     """
 
@@ -163,21 +165,25 @@ def eval(model, env, sv, sm, sess, args):
     per_timestep_losses /= float(args.n_eval_iters)
     total_returns /= float(args.n_eval_iters)
 
+    ##############
+
     loss = per_timestep_losses.mean()
-    tqdm.write("Validation loss: %.10f" % loss)
+    tqdm.write("Validation loss: %.10f" % loss, log_f)
 
     tqdm.write("Per-timestep validation losses:\n%s\n"
                % "\n".join("\t% 2i: %.10f" % (t, loss_t)
-                           for t, loss_t in enumerate(per_timestep_losses)))
+                           for t, loss_t in enumerate(per_timestep_losses)),
+               log_f)
 
     # Log random trajectories
     for traj, target in zip(trajectories, targets):
         tqdm.write("Trajectory: (target %s)"
-                   % env._graph.get_article_title(target))
+                   % env._graph.get_article_title(target), log_f)
         for article_id, reward in traj:
             # NB: Assumes traj with oracle
             tqdm.write("\t%-40s\t%.5f"
-                       % (env._graph.get_article_title(article_id), reward))
+                       % (env._graph.get_article_title(article_id), reward),
+                       log_f)
             if article_id == env._graph.stop_sentinel:
                 break
 
@@ -234,6 +240,9 @@ def train(args):
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
+    # Open a file for detailed progress logging.
+    log_f = open(os.path.join(args.logdir, "debug.log"), "w")
+
     batches_per_epoch = env._graph.get_num_paths(True) / args.batch_size + 1
     with sv.managed_session() as sess:
         for e in range(args.n_epochs):
@@ -248,8 +257,9 @@ def train(args):
                 if batch_num % args.eval_interval == 0:
                     tqdm.write("============================\n"
                                "Evaluating at batch %i, epoch %i"
-                               % (i, e))
-                    eval(model, eval_env, sv, sm, sess, args)
+                               % (i, e), log_f)
+                    eval(model, eval_env, sv, sm, sess, log_f, args)
+                    log_f.flush()
 
                 observations = env.reset_batch(args.batch_size)
                 mask = [1.0] * args.batch_size
@@ -291,6 +301,8 @@ def train(args):
                     sv.summary_computed(sess, summary)
                     tqdm.write("Batch % 5i training loss: %f" %
                                (batch_num, loss))
+
+    log_f.close()
 
 
 if __name__ == "__main__":
