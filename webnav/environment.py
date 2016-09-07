@@ -1,7 +1,9 @@
+from functools import partial
 import random
 
 import numpy as np
 from rllab.envs.base import Env, Step
+from rllab.misc import logger
 from sandbox.rocky.tf.spaces.box import Box
 from sandbox.rocky.tf.spaces.discrete import Discrete
 
@@ -39,7 +41,7 @@ class WebNavEnvironment(Env):
         self._navigator = navigator_cls(self._graph, self.beam_size,
                                         self.path_length)
 
-        self._action_space = Discrete(self.beam_size + 1)
+        self._action_space = Discrete(self.beam_size)
 
     @property
     def action_space(self):
@@ -72,7 +74,7 @@ class WebNavEnvironment(Env):
         return self._observe_batch()
 
     def step(self, action):
-        observations, dones, rewards = self.step_batch([action])[0]
+        observations, dones, rewards = self.step_batch([action])
         return Step(observation=observations[0],
                     done=dones[0],
                     reward=rewards[0])
@@ -118,13 +120,13 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     """
 
     def __init__(self, beam_size=10, graph=None, goal_reward=10.0,
-                 *args, **kwargs):
+                 oracle=False, *args, **kwargs):
         if graph is None:
             # Use a default graph so that we can function with rllab.
             graph = DEFAULT_WIKISPEEDIA_GRAPH
 
         super(EmbeddingWebNavEnvironment, self).__init__(
-                beam_size, graph, *args, **kwargs)
+                beam_size, graph, oracle=oracle, *args, **kwargs)
 
         self.embedding_dim = self._graph.embedding_dim
         self.goal_reward = goal_reward
@@ -158,8 +160,6 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
                 beam_embeddings
 
     def _reward(self, idx, action):
-        # TODO off-by-one -- need to return nonzero reward after STOP emission
-        # as well
         if self._navigator.successes[idx]:
             return self.goal_reward
         if self._navigator.dones[idx]:
