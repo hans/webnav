@@ -110,7 +110,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     WebNavEnvironment which uses word embeddings all over the place.
     """
 
-    def __init__(self, beam_size, graph, goal_reward=1.0, *args, **kwargs):
+    def __init__(self, beam_size, graph, goal_reward=10.0, *args, **kwargs):
         super(EmbeddingWebNavEnvironment, self).__init__(
                 beam_size, graph, *args, **kwargs)
 

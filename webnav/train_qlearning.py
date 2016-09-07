@@ -101,7 +101,7 @@ def eval(model, env, sv, sm, sess, args):
 
         # Sample a trajectory from a random batch element.
         sample_idx = np.random.choice(observations[0].shape[0])
-        traj = [(env.cur_article_ids[sample_idx])]
+        traj = [(env.cur_article_ids[sample_idx], 0.0)]
         targets.append(navigator._targets[sample_idx])
 
         for t in range(args.path_length):
@@ -123,7 +123,7 @@ def eval(model, env, sv, sm, sess, args):
             # Track our single batch element
             if masks_t[sample_idx] > 0.0:
                 traj_article = navigator.get_article_for_action(
-                        sample_idx, actions[sample_idx]))
+                        sample_idx, actions[sample_idx])
 
             observations, masks_t, rewards_t = env.step_batch(actions)
             rewards.append(rewards_t)
