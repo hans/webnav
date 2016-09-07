@@ -50,7 +50,7 @@ class WebNavEnvironment(Env):
         raise NotImplementedError
 
     def reset(self):
-        return self.reset_batch(self, 1)[0]
+        return self.reset_batch(1)[0]
 
     def reset_batch(self, batch_size):
         self._navigator.reset(batch_size, self.is_training)
@@ -104,13 +104,25 @@ class WebNavEnvironment(Env):
         raise NotImplementedError
 
 
+DEFAULT_PATH_LENGTH = 10
+DEFAULT_WIKISPEEDIA_GRAPH = web_graph.EmbeddedWikispeediaGraph(
+        "./data/wikispeedia/wikispeedia.pkl",
+        "./data/wikispeedia/wikispeedia_embeddings.npz",
+        DEFAULT_PATH_LENGTH)
+
+
 class EmbeddingWebNavEnvironment(WebNavEnvironment):
 
     """
     WebNavEnvironment which uses word embeddings all over the place.
     """
 
-    def __init__(self, beam_size, graph, goal_reward=10.0, *args, **kwargs):
+    def __init__(self, beam_size=10, graph=None, goal_reward=10.0,
+                 *args, **kwargs):
+        if graph is None:
+            # Use a default graph so that we can function with rllab.
+            graph = DEFAULT_WIKISPEEDIA_GRAPH
+
         super(EmbeddingWebNavEnvironment, self).__init__(
                 beam_size, graph, *args, **kwargs)
 
