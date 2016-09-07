@@ -148,6 +148,8 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     def _reward(self, idx, action):
         # TODO off-by-one -- need to return nonzero reward after STOP emission
         # as well
+        if self._navigator.successes[idx]:
+            return self.goal_reward
         if self._navigator.dones[idx]:
             return 0.0
 
