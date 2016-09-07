@@ -101,7 +101,7 @@ def eval(model, env, sv, sm, sess, args):
 
         # Sample a trajectory from a random batch element.
         sample_idx = np.random.choice(observations[0].shape[0])
-        traj = [env.cur_article_ids[sample_idx]]
+        traj = [(env.cur_article_ids[sample_idx])]
         targets.append(navigator._targets[sample_idx])
 
         for t in range(args.path_length):
@@ -122,12 +122,15 @@ def eval(model, env, sv, sm, sess, args):
 
             # Track our single batch element
             if masks_t[sample_idx] > 0.0:
-                traj.append(navigator.get_article_for_action(sample_idx,
-                                                             actions[sample_idx]))
+                traj_article = navigator.get_article_for_action(
+                        sample_idx, actions[sample_idx]))
 
             observations, masks_t, rewards_t = env.step_batch(actions)
             rewards.append(rewards_t)
             masks.append(masks_t)
+
+            if masks_t[sample_idx] > 0.0:
+                traj.append((traj_article, rewards_t[sample_idx]))
 
         # Compute Q-learning loss.
         fetches = model.all_losses
@@ -156,9 +159,10 @@ def eval(model, env, sv, sm, sess, args):
     for traj, target in zip(trajectories, targets):
         tqdm.write("Trajectory: (target %s)"
                    % env._graph.get_article_title(target))
-        for article_id in traj:
+        for article_id, reward in traj:
             # NB: Assumes traj with oracle
-            tqdm.write("\t%-40s" % env._graph.get_article_title(article_id))
+            tqdm.write("\t%-40s\t%.5f"
+                       % (env._graph.get_article_title(article_id), reward))
             if article_id == env._graph.stop_sentinel:
                 break
 
