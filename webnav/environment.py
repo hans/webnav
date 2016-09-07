@@ -110,11 +110,12 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     WebNavEnvironment which uses word embeddings all over the place.
     """
 
-    def __init__(self, beam_size, graph, *args, **kwargs):
+    def __init__(self, beam_size, graph, goal_reward=1.0, *args, **kwargs):
         super(EmbeddingWebNavEnvironment, self).__init__(
                 beam_size, graph, *args, **kwargs)
 
         self.embedding_dim = self._graph.embedding_dim
+        self.goal_reward = goal_reward
 
         self._just_reset = False
         self._query_embeddings = False
@@ -144,5 +145,18 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         return self._query_embeddings, current_page_embeddings, \
                 beam_embeddings
 
+    def _reward(self, idx, action):
+        # TODO off-by-one -- need to return nonzero reward after STOP emission
+        # as well
+        if self._navigator.successes[idx]:
+            return 0.0
+
+        # Calculate word overlap between new page and target page.
+        overlap = self._graph.get_relative_word_overlap(
+                self._navigator.cur_article_ids[idx],
+                self._navigator.targets[idx])
+        return overlap * self.goal_reward
+
     def _reward_batch(self, actions):
-        return self._navigator.successes.astype(np.float32)
+        return np.array([self._reward(idx, action) for idx, action
+                         in enumerate(actions)])

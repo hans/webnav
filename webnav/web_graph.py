@@ -57,6 +57,17 @@ class EmbeddedWebGraph(object):
             return "<STOP>"
         return self.articles[article_idx].title
 
+    def get_relative_word_overlap(self, article1_idx, article2_idx):
+        """
+        Get the proportion of words in `article1` that are also in `article2`.
+        """
+        article1 = self.articles[article1_idx]
+        article2 = self.articles[article2_idx]
+
+        article1_types = set(article1.text)
+        article2_types = set(article2.text)
+        return len(article1_types & article2_types) / float(len(article1_types))
+
     def get_query_embeddings(self, path_ids):
         raise NotImplementedError
 
@@ -145,8 +156,9 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
         self.embeddings = embeddings = np.load(emb_path)["arr_0"]
         self.embedding_dim = embeddings.shape[1]
 
-        articles = [EmbeddedArticle(article["name"], embeddings[i],
-                                    article["lead_tokens"])
+        articles = [EmbeddedArticle(
+                        article["name"], embeddings[i],
+                        set(token.lower() for token in article["lead_tokens"]))
                     for i, article in enumerate(data["articles"])]
 
         # Use a random article as a stop sentinel.
@@ -267,6 +279,13 @@ class BatchNavigator(object):
         Return the gold navigation actions for the current state.
         """
         raise RuntimeError("Gold actions not defined for this navigator!")
+
+    @property
+    def targets(self):
+        """
+        Return list of target article IDs for this batch.
+        """
+        return self._targets
 
     @property
     def gold_path_lengths(self):
