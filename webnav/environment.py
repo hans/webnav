@@ -148,7 +148,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
     def _reward(self, idx, action):
         # TODO off-by-one -- need to return nonzero reward after STOP emission
         # as well
-        if self._navigator.successes[idx]:
+        if self._navigator.dones[idx]:
             return 0.0
 
         # Calculate word overlap between new page and target page.

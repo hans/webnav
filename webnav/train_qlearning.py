@@ -125,7 +125,9 @@ def eval(model, env, sv, sm, sess, args):
                 traj_article = navigator.get_article_for_action(
                         sample_idx, actions[sample_idx])
 
-            observations, masks_t, rewards_t = env.step_batch(actions)
+            observations, dones, rewards_t = env.step_batch(actions)
+            masks_t = 1.0 - np.array(dones).astype(np.float32)
+
             rewards.append(rewards_t)
             masks.append(masks_t)
 
@@ -256,8 +258,10 @@ def train(args):
                     actions = np.argmax(scores_t, axis=1)
 
                     # TODO does dones == mask? I think mask should be True at
-                    # last timestep whereas done is false
-                    observations, mask_t, rewards_t = env.step_batch(actions)
+                    # last timestep whereas done would yield False mask
+                    observations, dones, rewards_t = env.step_batch(actions)
+                    mask_t = 1.0 - np.array(dones).astype(np.float32)
+
                     rewards.append(rewards_t)
                     masks.append(mask_t)
 

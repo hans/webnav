@@ -237,6 +237,7 @@ class BatchNavigator(object):
                                   in zip(self._paths, self._lengths)])
         self._on_target = np.array([False] * len(self._ids))
         self._successes = np.array([False] * len(self._ids))
+        self._stopped = np.array([False] * len(self._ids))
 
         self._num_steps = 0
         self._reset(batch_size, is_training)
@@ -251,11 +252,16 @@ class BatchNavigator(object):
         Make a navigation step with the given actions.
         """
         self._step(actions)
+        # Now cur_article_ids contains the result of taking the actions
+        # specified.
 
-        # Did we just stop at the target page?
-        stopped_at_target = np.logical_and(self._on_target,
-                                           actions == self.graph.stop_sentinel)
-        self._successes = np.logical_or(self._successes, stopped_at_target)
+        stopped_now = self.cur_article_ids == self.graph.stop_sentinel
+        self._stopped = np.logical_or(self._stopped, stopped_now)
+
+        # Did we just stop at the target page? (Use previous self._on_target
+        # before updating)
+        success_now = np.logical_and(self._on_target, stopped_now)
+        self._successes = np.logical_or(self._successes, success_now)
         self._on_target = self.cur_article_ids == self._targets
 
         self._num_steps += 1
@@ -301,8 +307,9 @@ class BatchNavigator(object):
         Return a boolean for each example indicating whether the traversal has
         finished.
         """
-        done = self._num_steps < self.path_length
-        return [done] * len(self._ids)
+        if self._num_steps > self.path_length:
+            return [True] * len(self._ids)
+        return self._stopped
 
     @property
     def successes(self):
