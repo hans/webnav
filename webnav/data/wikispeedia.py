@@ -28,7 +28,7 @@ Article = namedtuple("Article", ["name", "lead_tokens", "categories"])
 Path = namedtuple("Path", ["duration", "articles", "has_backtrack"])
 
 
-def load_raw_data(data_dir, lead_text_num_tokens=200):
+def load_raw_data(data_dir, lead_text_num_tokens=300):
     titles, original_titles = [], []
     with open(os.path.join(data_dir, "articles.tsv"), "r") as titles_f:
         for line in titles_f:
@@ -128,8 +128,11 @@ def load_raw_data(data_dir, lead_text_num_tokens=200):
 
 
 main_text_line = re.compile(r"""^   [^ ].*$""", re.MULTILINE)
+number_re = re.compile(r"^[0-9]{0,3}$")
 stopwords = set(stopwords.words("english"))
 stopwords.update(['.', ',', '"', "'", '?', '!', ':', ';', '(', ')', '[', ']', '{', '}'])
+stopwords.update(["'s", "''", "``"])
+stopwords.update(["also", "much", "very"])
 
 def load_article(data_dir, title, category_ids, lead_text_num_tokens):
     path = os.path.join(data_dir, "plaintext_articles", title + ".txt")
@@ -145,8 +148,9 @@ def load_article(data_dir, title, category_ids, lead_text_num_tokens):
                 continue
 
             match_tokens = nltk.word_tokenize(match)
-            tokens.extend([token for token in match_tokens
-                           if token.lower() not in stopwords])
+            tokens.extend([token.lower() for token in match_tokens
+                           if token.lower() not in stopwords
+                              and not number_re.match(token)])
 
     tokens = tokens[:lead_text_num_tokens]
 
