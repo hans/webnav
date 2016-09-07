@@ -126,13 +126,14 @@ def eval(model, env, sv, sm, sess, args):
                         sample_idx, actions[sample_idx])
 
             observations, dones, rewards_t = env.step_batch(actions)
-            masks_t = 1.0 - np.array(dones).astype(np.float32)
-
-            rewards.append(rewards_t)
-            masks.append(masks_t)
 
             if masks_t[sample_idx] > 0.0:
                 traj.append((traj_article, rewards_t[sample_idx]))
+
+            masks_t = 1.0 - np.array(dones).astype(np.float32)
+            rewards.append(rewards_t)
+            masks.append(masks_t)
+
 
         # Compute Q-learning loss.
         fetches = model.all_losses
@@ -239,8 +240,8 @@ def train(args):
                     eval(model, eval_env, sv, sm, sess, args)
 
                 observations = env.reset_batch(args.batch_size)
-                mask_t = [1.0] * args.batch_size
-                rewards, masks = [], []
+                mask = [1.0] * args.batch_size
+                rewards = []
 
                 for t in range(args.path_length):
                     query, cur_page, beam = observations
@@ -248,7 +249,7 @@ def train(args):
                     feed = {
                         model.current_node[t]: cur_page,
                         model.candidates[t]: beam,
-                        model.masks[t]: mask_t,
+                        model.masks[t]: mask,
                     }
                     if t == 0:
                         feed[model.query] = query
@@ -257,13 +258,11 @@ def train(args):
                                                 model.scores[t], feed)
                     actions = np.argmax(scores_t, axis=1)
 
-                    # TODO does dones == mask? I think mask should be True at
-                    # last timestep whereas done would yield False mask
                     observations, dones, rewards_t = env.step_batch(actions)
-                    mask_t = 1.0 - np.array(dones).astype(np.float32)
-
                     rewards.append(rewards_t)
-                    masks.append(mask_t)
+
+                    # Compute mask for next prediction timestep.
+                    mask = 1.0 - np.array(dones).astype(np.float32)
 
                 do_summary = i % args.summary_interval == 0
                 summary_fetch = summary_op if do_summary else train_op
@@ -294,7 +293,7 @@ if __name__ == "__main__":
     p.add_argument("--n_epochs", default=3, type=int)
     p.add_argument("--n_eval_iters", default=2, type=int)
 
-    p.add_argument("--logdir", default="/tmp/webnav_supervised")
+    p.add_argument("--logdir", default="/tmp/webnav_qlearning")
     p.add_argument("--eval_interval", default=100, type=int)
     p.add_argument("--summary_interval", default=100, type=int)
     p.add_argument("--n_eval_trajectories", default=5, type=int)
