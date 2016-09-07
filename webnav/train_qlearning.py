@@ -86,7 +86,8 @@ def eval(model, env, sv, sm, sess, args):
     """
 
     assert not env.is_training
-    trajectories, losses = [], []
+    trajectories, targets = [], []
+    losses = []
     navigator = env._navigator
 
     # Per-timestep loss accumulator.
@@ -95,12 +96,13 @@ def eval(model, env, sv, sm, sess, args):
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         observations = env.reset_batch(args.batch_size)
-        masks_t = [1.0] * args.batch_size
+        masks_t = [1.0] * len(observations[0])
         rewards, masks = [], []
 
         # Sample a trajectory from a random batch element.
         sample_idx = np.random.choice(observations[0].shape[0])
         traj = [env.cur_article_ids[sample_idx]]
+        targets.append(navigator._targets[sample_idx])
 
         for t in range(args.path_length):
             query, cur_page, beam = observations
@@ -151,8 +153,9 @@ def eval(model, env, sv, sm, sess, args):
                            for t, loss_t in enumerate(per_timestep_losses)))
 
     # Log random trajectories
-    for traj in trajectories:
-        tqdm.write("Trajectory:")
+    for traj, target in zip(trajectories, targets):
+        tqdm.write("Trajectory: (target %s)"
+                   % env._graph.get_article_title(target))
         for article_id in traj:
             # NB: Assumes traj with oracle
             tqdm.write("\t%-40s" % env._graph.get_article_title(article_id))
