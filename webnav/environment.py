@@ -49,13 +49,6 @@ class WebNavEnvironment(Env):
     def observation_space(self):
         raise NotImplementedError
 
-    def reset(self):
-        return self.reset_batch(1)[0]
-
-    def reset_batch(self, batch_size):
-        self._navigator.reset(batch_size, self.is_training)
-        return self._observe_batch()
-
     @property
     def cur_article_ids(self):
         return self._navigator.cur_article_ids
@@ -70,6 +63,13 @@ class WebNavEnvironment(Env):
 
     def get_article_for_action(self, example_idx, action):
         return self._navigator.get_article_for_action(example_idx, action)
+
+    def reset(self):
+        return self.reset_batch(1)[0]
+
+    def reset_batch(self, batch_size):
+        self._navigator.reset(batch_size, self.is_training)
+        return self._observe_batch()
 
     def step(self, action):
         observations, dones, rewards = self.step_batch([action])[0]
