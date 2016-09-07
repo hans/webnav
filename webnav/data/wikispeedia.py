@@ -80,6 +80,8 @@ def load_raw_data(data_dir, lead_text_num_tokens=300):
             source_name, tgt_name = line.split("\t")
             source_id = title2id[decode_name(source_name)]
             tgt_id = title2id[decode_name(tgt_name)]
+            if tgt_id == source_id:
+                continue
             links[source_id].append(tgt_id)
 
 
