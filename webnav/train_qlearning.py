@@ -54,13 +54,22 @@ def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
             target += gamma * q_a_pred[t + 1]
 
         q_targets.append(target)
-        targets_mean, targets_var = tf.nn.moments(target, [0, 1])
-        tf.scalar_summary("q_%i/target/mean" % t, targets_mean)
-        tf.scalar_summary("q_%i/target/var" % t, targets_var)
 
-        scores_mean, scores_var = tf.nn.moments(scores[t], [0, 1])
-        tf.scalar_summary("q_%i/pred/mean" % t, scores_mean)
-        tf.scalar_summary("q_%i/pred/var" % t, scores_var)
+        # Summary: mean and variance of Q targets at this timestep
+        targets_mean, targets_var = tf.nn.moments(target, [0])
+        tf.scalar_summary("q/%i/target/mean" % t, targets_mean)
+        tf.scalar_summary("q/%i/target/var" % t, targets_var)
+
+        # Summary: mean and variance of predicted Q values for optimal
+        # actions at this timestep
+        q_a_pred_mean, q_a_pred_var = tf.nn.moments(q_a_pred[t], [0])
+        tf.scalar_summary("q/%i/pred_max/mean" % t, q_a_pred_mean)
+        tf.scalar_summary("q/%i/pred_max/var" % t, q_a_pred_var)
+
+        # Summary: mean and variance of all Q values in batch
+        q_pred_mean, q_pred_var = tf.nn.moments(scores[t], [0, 1])
+        tf.scalar_summary("q/%i/pred/mean" % t, q_pred_mean)
+        tf.scalar_summary("q/%i/pred/var" % t, q_pred_var)
 
     losses = [tf.reduce_mean(tf.square(mask_t * (q_target_t - q_a_pred_t)))
               for q_target_t, q_a_pred_t, mask_t
