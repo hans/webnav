@@ -3,6 +3,7 @@ import tensorflow as tf
 
 from rllab.core.serializable import Serializable
 from rllab.misc import special
+from rllab.misc.overrides import overrides
 from sandbox.rocky.tf.distributions.recurrent_categorical import RecurrentCategorical
 from sandbox.rocky.tf.misc.tensor_utils import compile_function
 from sandbox.rocky.tf.policies.base import StochasticPolicy
@@ -17,7 +18,6 @@ from webnav.session import PartialRunSessionManager
 class RankingRecurrentPolicy(StochasticPolicy, Serializable):
 
     def __init__(self, name, env):
-        assert isinstance(env, EmbeddingWebNavEnvironment)
         assert isinstance(env.observation_space, Product)
         Serializable.quick_init(self, locals())
         super(RankingRecurrentPolicy, self).__init__(env)
