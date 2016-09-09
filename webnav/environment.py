@@ -6,6 +6,7 @@ from rllab.envs.base import Env, Step
 from rllab.misc import logger
 from sandbox.rocky.tf.spaces.box import Box
 from sandbox.rocky.tf.spaces.discrete import Discrete
+from sandbox.rocky.tf.spaces.product import Product
 
 from webnav import web_graph
 
