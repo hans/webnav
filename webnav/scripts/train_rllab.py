@@ -14,6 +14,7 @@ from sandbox.rocky.tf.optimizers.conjugate_gradient_optimizer import ConjugateGr
 
 from webnav.policies import RankingRecurrentPolicy
 from webnav.environment import EmbeddingWebNavEnvironment
+from webnav.sampler import VectorizedSampler
 from webnav.web_graph import EmbeddedWikispeediaGraph
 
 
@@ -58,6 +59,7 @@ def run_experiment(cli_args, **params):
             discount=0.99,
             step_size=params["step_size"],
             optimizer=optimizer,
+            sampler_cls=VectorizedSampler,
     )
 
     run_experiment_lite(
