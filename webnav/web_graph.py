@@ -378,8 +378,8 @@ class OracleBatchNavigator(BatchNavigator):
     def cur_article_ids(self):
         return np.array([path[idx] if idx < length
                          else self.graph.stop_sentinel
-                         for idx, (path, length)
-                         in enumerate(zip(self._paths, self._lengths))])
+                         for idx, path, length
+                         in zip(self._cursors, self._paths, self._lengths)])
 
     @property
     def gold_actions(self):

@@ -134,15 +134,12 @@ def eval(model, env, sv, sm, sess, log_f, args):
                                         feed)
             actions = scores_t.argmax(axis=1)
 
-            # Track our single batch element
-            if masks_t[sample_idx] > 0.0:
-                traj_article = navigator.get_article_for_action(
-                        sample_idx, actions[sample_idx])
-
             observations, dones, rewards_t = env.step_batch(actions)
 
+            # Track our single batch element.
             if masks_t[sample_idx] > 0.0:
-                traj.append((traj_article, rewards_t[sample_idx]))
+                traj.append((env.cur_article_ids[sample_idx],
+                             rewards_t[sample_idx]))
 
             masks_t = 1.0 - np.array(dones).astype(np.float32)
             rewards.append(rewards_t)

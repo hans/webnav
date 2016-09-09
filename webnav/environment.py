@@ -160,7 +160,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         return self._query_embeddings, current_page_embeddings, \
                 beam_embeddings
 
-    def _reward(self, idx, action):
+    def _reward(self, idx):
         if self._navigator.successes[idx]:
             return self.goal_reward
         if self._navigator.dones[idx]:
@@ -173,5 +173,5 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         return overlap * self.goal_reward
 
     def _reward_batch(self, actions):
-        return np.array([self._reward(idx, action) for idx, action
-                         in enumerate(actions)])
+        return np.array([self._reward(idx) for idx
+                         in range(len(self._query_embeddings))])
