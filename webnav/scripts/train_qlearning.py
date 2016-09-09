@@ -85,6 +85,34 @@ def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
                    losses, loss)
 
 
+def rollout(model, env, sm, sess, args):
+    observations = env.reset_batch(args.batch_size)
+    batch_size = len(observations[0])
+
+    masks_t = [1.0] * batch_size
+
+    for t in range(args.path_length):
+        query, cur_page, beam = observations
+
+        feed = {
+            model.current_node[t]: cur_page,
+            model.candidates[t]: beam,
+            model.masks[t]: masks_t,
+        }
+        if t == 0:
+            feed[model.query] = query
+
+        scores_t = sess.partial_run(sm.partial_handle, model.scores[t],
+                                    feed)
+        actions = scores_t.argmax(axis=1)
+        new_observations, dones, rewards = env.step_batch(actions)
+
+        yield t, observations, scores_t, actions, dones, rewards
+
+        observations = new_observations
+        masks_t = 1.0 - np.asarray(dones).astype(np.float32)
+
+
 def eval(model, env, sv, sm, sess, log_f, args):
     """
     Evaluate the given model on a test environment and log detailed results.
@@ -109,42 +137,23 @@ def eval(model, env, sv, sm, sess, log_f, args):
     total_returns = 0.0
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
-        observations = env.reset_batch(args.batch_size)
-        masks_t = [1.0] * len(observations[0])
-        rewards, masks = [], []
+        rewards = []
 
-        # Sample a trajectory from a random batch element.
-        sample_idx = np.random.choice(observations[0].shape[0])
-        traj = [(env.cur_article_ids[sample_idx], 0.0)]
-        targets.append(navigator._targets[sample_idx])
+        for iter_info in rollout(model, env, sm, sess, args):
+            t, observations, _, _, dones, rewards_t = iter_info
 
-        for t in range(args.path_length):
-            query, cur_page, beam = observations
-
-            feed = {
-                model.current_node[t]: cur_page,
-                model.candidates[t]: beam,
-                model.masks[t]: masks_t,
-            }
+            # Set up to track a trajectory of a single batch element.
             if t == 0:
-                feed[model.query] = query
-
-            fetch = [model.all_losses[t], model.scores[t]]
-            scores_t = sess.partial_run(sm.partial_handle, model.scores[t],
-                                        feed)
-            actions = scores_t.argmax(axis=1)
-
-            observations, dones, rewards_t = env.step_batch(actions)
+                sample_idx = np.random.choice(len(observations[0]))
+                traj = [(env.cur_article_ids[sample_idx], 0.0)]
+                targets.append(navigator._targets[sample_idx])
 
             # Track our single batch element.
-            if masks_t[sample_idx] > 0.0:
+            if not dones[sample_idx]:
                 traj.append((env.cur_article_ids[sample_idx],
                              rewards_t[sample_idx]))
 
-            masks_t = 1.0 - np.array(dones).astype(np.float32)
             rewards.append(rewards_t)
-            masks.append(masks_t)
-
 
         # Compute Q-learning loss.
         fetches = model.all_losses
@@ -258,30 +267,10 @@ def train(args):
                     eval(model, eval_env, sv, sm, sess, log_f, args)
                     log_f.flush()
 
-                observations = env.reset_batch(args.batch_size)
-                mask = [1.0] * args.batch_size
                 rewards = []
-
-                for t in range(args.path_length):
-                    query, cur_page, beam = observations
-
-                    feed = {
-                        model.current_node[t]: cur_page,
-                        model.candidates[t]: beam,
-                        model.masks[t]: mask,
-                    }
-                    if t == 0:
-                        feed[model.query] = query
-
-                    scores_t = sess.partial_run(sm.partial_handle,
-                                                model.scores[t], feed)
-                    actions = np.argmax(scores_t, axis=1)
-
-                    observations, dones, rewards_t = env.step_batch(actions)
+                for iter_info in rollout(model, env, sm, sess, args):
+                    t, _, _, _, _, rewards_t = iter_info
                     rewards.append(rewards_t)
-
-                    # Compute mask for next prediction timestep.
-                    mask = 1.0 - np.array(dones).astype(np.float32)
 
                 do_summary = i % args.summary_interval == 0
                 summary_fetch = summary_op if do_summary else train_op
