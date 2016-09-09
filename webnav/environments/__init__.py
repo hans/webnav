@@ -1,0 +1,1 @@
+from webnav.environments.webnav_env import EmbeddingWebNavEnvironment

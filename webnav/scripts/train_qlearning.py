@@ -16,7 +16,7 @@ from tensorflow.contrib.layers import layers
 from tqdm import tqdm, trange
 
 from webnav import web_graph
-from webnav.environment import EmbeddingWebNavEnvironment
+from webnav.environments import EmbeddingWebNavEnvironment
 from webnav.rnn_model import rnn_model
 from webnav.session import PartialRunSessionManager
 from webnav.util import discount_cumsum
