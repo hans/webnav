@@ -19,17 +19,17 @@ from webnav import web_graph
 from webnav.environments import EmbeddingWebNavEnvironment
 from webnav.rnn_model import q_model
 from webnav.session import PartialRunSessionManager
-from webnav.util import discount_cumsum
+from webnav.util import discount_cumsum, transpose_list
 
 
-def rollout(model, env, sm, sess, args):
-    observations = env.reset_batch(args.batch_size)
-    batch_size = len(observations[0])
+def rollout(model, envs, sm, sess, args):
+    observations = [env.reset() for env in envs]
+    batch_size = len(envs)
 
     masks_t = [1.0] * batch_size
 
     for t in range(args.path_length):
-        query, cur_page, beam = observations
+        query, cur_page, beam = transpose_list(observations)
 
         feed = {
             model.current_node[t]: cur_page,
@@ -42,15 +42,19 @@ def rollout(model, env, sm, sess, args):
         scores_t = sess.partial_run(sm.partial_handle, model.scores[t],
                                     feed)
         actions = scores_t.argmax(axis=1)
-        new_observations, dones, rewards = env.step_batch(actions)
 
-        yield t, observations, scores_t, actions, dones, rewards
+        next_steps = [env.step(action)
+                      for env, action in zip(envs, actions)]
+        obs_next, rewards_t, dones_t, _ = map(list, zip(*next_steps))
 
-        observations = new_observations
+        yield t, observations, scores_t, actions, rewards_t, dones_t
+
+        observations = [next_step.observation for next_step in next_steps]
+        dones = [next_step.done for next_step in next_steps]
         masks_t = 1.0 - np.asarray(dones).astype(np.float32)
 
 
-def eval(model, env, sv, sm, sess, log_f, args):
+def eval(model, envs, sv, sm, sess, log_f, args):
     """
     Evaluate the given model on a test environment and log detailed results.
 
@@ -64,10 +68,11 @@ def eval(model, env, sv, sm, sess, log_f, args):
         args:
     """
 
-    assert not env.is_training
+    assert not envs[0].is_training
+    graph = envs[0]._graph
+
     trajectories, targets = [], []
     losses = []
-    navigator = env._navigator
 
     # Per-timestep loss accumulator.
     per_timestep_losses = np.zeros((args.path_length,))
@@ -76,18 +81,19 @@ def eval(model, env, sv, sm, sess, log_f, args):
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         rewards = []
 
-        for iter_info in rollout(model, env, sm, sess, args):
-            t, observations, _, _, dones, rewards_t = iter_info
+        for iter_info in rollout(model, envs, sm, sess, args):
+            t, observations, _, _, rewards_t, dones_t = iter_info
 
             # Set up to track a trajectory of a single batch element.
             if t == 0:
-                sample_idx = np.random.choice(len(observations[0]))
-                traj = [(env.cur_article_ids[sample_idx], 0.0)]
-                targets.append(navigator._targets[sample_idx])
+                sample_idx = np.random.choice(len(envs))
+                sample_env = envs[sample_idx]
+                traj = [(sample_env._navigator._path[0], 0.0)]
+                targets.append(sample_env._navigator.target_id)
 
             # Track our single batch element.
-            if not dones[sample_idx]:
-                traj.append((env.cur_article_ids[sample_idx],
+            if not dones_t[sample_idx]:
+                traj.append((sample_env.cur_article_id,
                              rewards_t[sample_idx]))
 
             rewards.append(rewards_t)
@@ -121,13 +127,13 @@ def eval(model, env, sv, sm, sess, log_f, args):
     # Log random trajectories
     for traj, target in zip(trajectories, targets):
         tqdm.write("Trajectory: (target %s)"
-                   % env._graph.get_article_title(target), log_f)
+                   % graph.get_article_title(target), log_f)
         for article_id, reward in traj:
             # NB: Assumes traj with oracle
             tqdm.write("\t%-40s\t%.5f"
-                       % (env._graph.get_article_title(article_id), reward),
+                       % (graph.get_article_title(article_id), reward),
                        log_f)
-            if article_id == env._graph.stop_sentinel:
+            if article_id == graph.stop_sentinel:
                 break
 
     # Write summaries using supervisor.
@@ -154,12 +160,14 @@ def train(args):
     else:
         raise ValueError("Invalid data_type %s" % args.data_type)
 
-    env = EmbeddingWebNavEnvironment(args.beam_size, graph, is_training=True,
-                                     oracle=False)
-    eval_env = EmbeddingWebNavEnvironment(args.beam_size, graph,
-                                          is_training=False, oracle=False)
+    envs = [EmbeddingWebNavEnvironment(args.beam_size, graph, is_training=True,
+                                       oracle=False)
+            for _ in range(args.batch_size)]
+    eval_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                            is_training=False, oracle=False)
+                 for _ in range(args.batch_size)]
 
-    model = q_model(args.beam_size, args.path_length, env.embedding_dim,
+    model = q_model(args.beam_size, args.path_length, envs[0].embedding_dim,
                     args.gamma)
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
@@ -186,7 +194,7 @@ def train(args):
     # Open a file for detailed progress logging.
     log_f = open(os.path.join(args.logdir, "debug.log"), "w")
 
-    batches_per_epoch = env._graph.get_num_paths(True) / args.batch_size + 1
+    batches_per_epoch = graph.get_num_paths(True) / args.batch_size + 1
     with sv.managed_session() as sess:
         for e in range(args.n_epochs):
             if sv.should_stop():
@@ -201,11 +209,11 @@ def train(args):
                     tqdm.write("============================\n"
                                "Evaluating at batch %i, epoch %i"
                                % (i, e), log_f)
-                    eval(model, eval_env, sv, sm, sess, log_f, args)
+                    eval(model, eval_envs, sv, sm, sess, log_f, args)
                     log_f.flush()
 
                 rewards = []
-                for iter_info in rollout(model, env, sm, sess, args):
+                for iter_info in rollout(model, envs, sm, sess, args):
                     t, _, _, _, _, rewards_t = iter_info
                     rewards.append(rewards_t)
 

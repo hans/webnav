@@ -6,6 +6,7 @@ from collections import namedtuple
 import random
 
 import numpy as np
+from rllab.misc.overrides import overrides
 
 
 EmbeddedArticle = namedtuple("EmbeddedArticle", ["title", "embedding", "text"])
@@ -206,7 +207,7 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
         return path
 
 
-class BatchNavigator(object):
+class Navigator(object):
 
     def __init__(self, graph, beam_size, path_length):
         self.graph = graph
@@ -221,80 +222,77 @@ class BatchNavigator(object):
         assert self._dummy_page != self.graph.stop_sentinel, \
                 "A very improbable event has occurred. Please restart."
 
-        self._ids, self._paths, self._lengths = None, None, None
-        self._beams = None
+        self._id, self._path, self._length = None, None, None
+        self._beam = None
 
-    def reset(self, batch_size, is_training):
+    def reset(self, is_training):
         """
-        Prepare a new navigation batch with the given parameters.
+        Prepare a new navigation rollout.
         """
         # TODO: Sample outside of the training set.
-        self._ids, self._paths, self._lengths = \
-                self.graph.sample_paths(batch_size, is_training)
-        self._cur_article_ids = [path[0] for path in self._paths]
+        ids, paths, lengths = self.graph.sample_paths(1, is_training)
+        self._id, self._path, self._length = ids[0], paths[0], lengths[0]
+        self._cur_article_id = self._path[0]
 
-        self._targets = np.array([path[length - 2] for path, length
-                                  in zip(self._paths, self._lengths)])
-        self._on_target = np.array([False] * len(self._ids))
-        self._successes = np.array([False] * len(self._ids))
-        self._stopped = np.array([False] * len(self._ids))
+        self._target_id = self._path[self._length - 2]
+        self._on_target = False
+        self._success, self._stopped = False, False
 
         self._num_steps = 0
-        self._reset(batch_size, is_training)
+        self._reset(is_training)
         self._prepare()
 
-    def _reset(self, batch_size, is_training):
+    def _reset(self, is_training):
         # For subclasses.
         pass
 
-    def step(self, actions):
+    def step(self, action):
         """
         Make a navigation step with the given actions.
         """
-        self._step(actions)
-        # Now cur_article_ids contains the result of taking the actions
+        self._step(action)
+        # Now cur_article_id contains the result of taking the actions
         # specified.
 
-        stopped_now = self.cur_article_ids == self.graph.stop_sentinel
-        self._stopped = np.logical_or(self._stopped, stopped_now)
+        stopped_now = self.cur_article_id == self.graph.stop_sentinel
+        self._stopped = self._stopped or stopped_now
 
         # Did we just stop at the target page? (Use previous self._on_target
-        # before updating)
-        success_now = np.logical_and(self._on_target, stopped_now)
-        self._successes = np.logical_or(self._successes, success_now)
-        self._on_target = self.cur_article_ids == self._targets
+        # before updating `on_target`)
+        success_now = self._on_target and stopped_now
+        self._success = self._success or success_now
+        self._on_target = self.cur_article_id == self._target_id
 
         self._num_steps += 1
         self._prepare()
 
-    def _step(self, actions):
+    def _step(self, action):
         """
-        For subclasses. Modify state using `actions`. Metadata handled by this
+        For subclasses. Modify state using `action`. Metadata handled by this
         superclass.
         """
-        self._cur_article_ids = self._beams[np.arange(self._beams.shape[0]),
-                                            actions]
+        self._cur_article_id = self.get_article_for_action(action)
 
     @property
-    def cur_article_ids(self):
-        return self._cur_article_ids
+    def cur_article_id(self):
+        return self._cur_article_id
 
     @property
-    def gold_actions(self):
+    def gold_action(self):
         """
-        Return the gold navigation actions for the current state.
+        Return the gold navigation action for the current state.
         """
         raise RuntimeError("Gold actions not defined for this navigator!")
 
     @property
-    def targets(self):
+    def target_id(self):
         """
-        Return list of target article IDs for this batch.
+        Return target article ID.
         """
-        return self._targets
+        return self._target_id
 
     @property
-    def gold_path_lengths(self):
+    def gold_path_length(self):
         """
         Return length of un-padded version of gold path (including stop
         sentinel).
@@ -302,58 +300,50 @@ class BatchNavigator(object):
         raise RuntimeError("Gold paths not defined for this navigator!")
 
     @property
-    def dones(self):
+    def done(self):
         """
-        Return a boolean for each example indicating whether the traversal has
-        finished.
+        `True` if the traversal was manually stopped or if the path length has
+        been reached.
         """
-        if self._num_steps > self.path_length:
-            return [True] * len(self._ids)
-        return self._stopped
+        return self._stopped or self._num_steps > self.path_length
 
     @property
-    def successes(self):
+    def success(self):
         """
-        Return a boolean for each example indicating whether it has
-        successfully reached the target.
+        `True` when the traversal has successfully reached the target.
         """
-        return self._successes
+        return self._success
 
-    def get_article_for_action(self, example_idx, action):
+    def get_article_for_action(self, action):
         """
-        Get the article ID corresponding to an action ID in a particular
-        example.
+        Get the article ID corresponding to an action ID on the beam.
         """
-        return self._beams[example_idx, action]
+        return self._beam[action]
 
     def _get_candidates(self):
         """
-        For each example, build a beam of candidate next-page IDs consisting of
-        available links on the corresponding current article.
+        Build a beam of candidate next-page IDs consisting of available links
+        on the current article.
 
-        NB: The candidate lists returned may have a regular pattern, e.g. the
+        NB: The candidate list returned may have a regular pattern, e.g. the
         stop sentinel / filler candidates (for candidate lists which are smaller
         than the beam size) may always be in the same position in the list.
         Make sure to not build models (e.g. ones with output biases) that might
         capitalize on this pattern.
 
         Returns:
-            candidates: List of lists of article IDs, each sublist of length
-                `self.beam_size`.
+            candidates: List of article IDs of length `self.beam_size`.
         """
-        candidates = []
-        for article_id in self._cur_article_ids:
-            all_links = self.graph.get_article_links(article_id)
+        all_links = self.graph.get_article_links(self.cur_article_id)
 
-            # Sample `beam_size - 1`; add the STOP sentinel
-            links = random.sample(all_links, min(self.beam_size - 1,
-                                                 len(all_links)))
-            links.append(self.graph.stop_sentinel)
+        # Sample `beam_size - 1`; add the STOP sentinel
+        candidates = random.sample(all_links, min(self.beam_size - 1,
+                                                  len(all_links)))
+        candidates.append(self.graph.stop_sentinel)
 
-            if len(links) < self.beam_size:
-                links.extend([self._dummy_page] * (self.beam_size - len(links)))
-
-            candidates.append(links)
+        if len(candidates) < self.beam_size:
+            padding = [self._dummy_page] * (self.beam_size - len(candidates))
+            candidates.extend(padding)
 
         return candidates
 
@@ -362,96 +352,91 @@ class BatchNavigator(object):
         Prepare/update information about the current navigator state.
         Should be called after reset / steps are taken.
         """
-        self._beams = np.array(self._get_candidates())
+        self._beam = self._get_candidates()
 
 
-class OracleBatchNavigator(BatchNavigator):
+class OracleNavigator(Navigator):
 
-    def _reset(self, batch_size, is_training):
-        self._cursors = np.zeros_like(self._lengths, dtype=np.int32)
+    def _reset(self, is_training):
+        self._cursor = 0
 
-    def _step(self, actions):
-        # Ignore the actions; we are following gold paths.
-        self._cursors += 1
-
-    @property
-    def cur_article_ids(self):
-        return np.array([path[idx] if idx < length
-                         else self.graph.stop_sentinel
-                         for idx, path, length
-                         in zip(self._cursors, self._paths, self._lengths)])
+    def _step(self, action):
+        # Ignore the action; we are following gold paths.
+        self._cursor += 1
 
     @property
-    def gold_actions(self):
-        return self._gold_actions
+    @overrides
+    def cur_article_id(self):
+        if self._cursor < self._length:
+            return self._path[self._cursor]
+        return self.graph.stop_sentinel
 
     @property
-    def gold_path_lengths(self):
-        return self._lengths
+    @overrides
+    def gold_action(self):
+        return self._gold_action
 
     @property
-    def dones(self):
-        return self._cursors >= self._lengths
+    @overrides
+    def gold_path_length(self):
+        return self._length
+
+    @property
+    @overrides
+    def done(self):
+        return self._cursor >= self._length
 
     def _get_candidates(self):
         """
-        For each example, build a beam of candidate next-page IDs consisting of
-        the valid solution and other negatively-sampled candidate links on the
-        page.
+        Build a beam of candidate next-page IDs consisting of the valid
+        solution and other negatively-sampled candidate links on the page.
 
-        NB: The candidate lists returned may have a regular pattern, e.g. the
+        NB: The candidate list returned may have a regular pattern, e.g. the
         stop sentinel / filler candidates (for candidate lists which are smaller
         than the beam size) may always be in the same position in the list.
         Make sure to not build models (e.g. ones with output biases) that might
         capitalize on this pattern.
 
         Returns:
-            candidates: List of lists of article IDs, each sublist of length
-                `self.beam_size`. Each list is guaranteed to contain 1) the
-                gold next page according to the oracle trajectory and 2) the
-                stop sentinel. (Note that these two will make up just one
-                candidate if the valid next action is to stop.)
+            candidates: List of article IDs of length `self.beam_size`.
+                The list is guaranteed to contain 1) the gold next page
+                according to the oracle trajectory and 2) the stop sentinel.
+                (Note that these two will make up just one candidate if the
+                valid next action is to stop.)
         """
-        candidates, ys = [], []
-        for cursor, path in zip(self._cursors, self._paths):
-            cur_id = path[cursor]
-            # Retrieve gold next-page choice for this example
-            try:
-                gold_next_id = path[cursor + 1]
-            except IndexError:
-                # We are at the end of this path and ready to quit. Prepare a
-                # dummy beam that won't have any effect.
-                candidates.append([self._dummy_page] * self.beam_size)
-                ys.append(0)
-                continue
+        # Retrieve gold next-page choice for this example
+        try:
+            gold_next_id = path[cursor + 1]
+        except IndexError:
+            # We are at the end of this path and ready to quit. Prepare a
+            # dummy beam that won't have any effect.
+            candidates = [self._dummy_page] * self.beam_size
+            self._gold_action = 0
+            return candidates
 
-            ids = self.graph.get_article_links(cur_id)
-            ids = [int(x) for x in ids if x != gold_next_id]
+        ids = self.graph.get_article_links(self.cur_article_id)
+        ids = [int(x) for x in ids if x != gold_next_id]
 
-            # Beam must be large enough to hold gold + STOP + a distractor
-            assert self.beam_size >= 3
-            gold_is_stop = gold_next_id == self.graph.stop_sentinel
+        # Beam must be large enough to hold gold + STOP + a distractor
+        assert self.beam_size >= 3
+        gold_is_stop = gold_next_id == self.graph.stop_sentinel
 
-            # Number of distractors to sample
-            sample_size = self.beam_size - 1 if gold_is_stop \
-                    else self.beam_size - 2
+        # Number of distractors to sample
+        sample_size = self.beam_size - 1 if gold_is_stop \
+                else self.beam_size - 2
 
-            if len(ids) > sample_size:
-                ids = random.sample(ids, sample_size)
-            if len(ids) < sample_size:
-                ids += [self._dummy_page] * (sample_size - len(ids))
+        if len(ids) > sample_size:
+            ids = random.sample(ids, sample_size)
+        if len(ids) < sample_size:
+            ids += [self._dummy_page] * (sample_size - len(ids))
 
-            # Add the gold page.
-            ids = [gold_next_id] + ids
-            if not gold_is_stop:
-                ids += [self.graph.stop_sentinel]
-            random.shuffle(ids)
+        # Add the gold page.
+        ids = [gold_next_id] + ids
+        if not gold_is_stop:
+            ids += [self.graph.stop_sentinel]
+        random.shuffle(ids)
 
-            assert len(ids) == self.beam_size
+        assert len(ids) == self.beam_size
 
-            candidates.append(ids)
-            ys.append(ids.index(gold_next_id))
-
-        self._gold_actions = ys
-        return candidates
-
+        self._gold_action = gold_next_id
+        return ids

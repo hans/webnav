@@ -37,8 +37,8 @@ class WebNavEnvironment(Env):
         self.path_length = self._graph.path_length
         self.is_training = is_training
 
-        navigator_cls = web_graph.OracleBatchNavigator if oracle \
-                else web_graph.BatchNavigator
+        navigator_cls = web_graph.OracleNavigator if oracle \
+                else web_graph.Navigator
         self._navigator = navigator_cls(self._graph, self.beam_size,
                                         self.path_length)
 
@@ -53,65 +53,52 @@ class WebNavEnvironment(Env):
         raise NotImplementedError
 
     @property
-    def cur_article_ids(self):
-        return self._navigator.cur_article_ids
+    def cur_article_id(self):
+        return self._navigator.cur_article_id
 
     @property
-    def gold_actions(self):
-        return self._navigator.gold_actions
+    def gold_action(self):
+        return self._navigator.gold_action
 
     @property
-    def gold_path_lengths(self):
-        return self._navigator.gold_path_lengths
+    def gold_path_length(self):
+        return self._navigator.gold_path_length
 
-    def get_article_for_action(self, example_idx, action):
-        return self._navigator.get_article_for_action(example_idx, action)
+    def get_article_for_action(self, action):
+        return self._navigator.get_article_for_action(action)
 
     def reset(self):
-        return self.reset_batch(1)[0]
-
-    def reset_batch(self, batch_size):
-        self._navigator.reset(batch_size, self.is_training)
-        return self._observe_batch()
+        self._navigator.reset(self.is_training)
+        return self._observe()
 
     def step(self, action):
-        observations, dones, rewards = self.step_batch([action])
-        return Step(observation=observations[0],
-                    done=dones[0],
-                    reward=rewards[0])
-
-    def step_batch(self, actions):
-        # Take the step in graph-space!
-        self._navigator.step(actions)
-
-        rewards = self._reward_batch(actions)
-
-        return self._observe_batch(), self._navigator.dones, rewards
+        self._navigator.step(action)
+        return Step(observation=self._observe(),
+                    done=self._navigator.done,
+                    reward=self._reward(action))
 
     def _observe(self):
-        return self._observe_batch()[0]
-
-    def _observe_batch(self):
         # abstract
         raise NotImplementedError
 
     def _reward(self, action):
-        return self._reward_batch([action])[0]
-
-    def _reward_batch(self, actions):
         """
-        Compute reward after having taken the actions specified by `actions`.
-        (i.e. class state already reflects the given actions)
+        Compute reward after having taken the action specified by `action`.
+        (i.e. class state already reflects the given action)
         """
         # abstract
         raise NotImplementedError
 
 
-DEFAULT_PATH_LENGTH = 10
-DEFAULT_WIKISPEEDIA_GRAPH = web_graph.EmbeddedWikispeediaGraph(
-        "./data/wikispeedia/wikispeedia.pkl",
-        "./data/wikispeedia/wikispeedia_embeddings.npz",
-        DEFAULT_PATH_LENGTH)
+def get_default_wikispeedia_graph():
+    if not hasattr(get_default_wikispeedia_graph, "graph"):
+        path_length = 10
+        graph = web_graph.EmbeddedWikispeediaGraph(
+                "./data/wikispeedia/wikispeedia.pkl",
+                "./data/wikispeedia/wikispeedia_embeddings.npz",
+                path_length)
+        get_default_wikispeedia_graph.graph = graph
+    return get_default_wikispeedia_graph.graph
 
 
 class EmbeddingWebNavEnvironment(WebNavEnvironment):
@@ -124,7 +111,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
                  oracle=False, *args, **kwargs):
         if graph is None:
             # Use a default graph so that we can function with rllab.
-            graph = DEFAULT_WIKISPEEDIA_GRAPH
+            graph = get_default_wikispeedia_graph()
 
         super(EmbeddingWebNavEnvironment, self).__init__(
                 beam_size, graph, oracle=oracle, *args, **kwargs)
@@ -133,7 +120,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         self.goal_reward = goal_reward
 
         self._just_reset = False
-        self._query_embeddings = False
+        self._query_embedding = None
 
     @property
     def observation_space(self):
@@ -142,22 +129,22 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         return Box(low=-5, high=5,
                    shape=(2 + self.beam_size, self.embedding_dim))
 
-    def reset_batch(self, batch_size):
+    def reset(self):
         self._just_reset = True
-        return super(EmbeddingWebNavEnvironment, self).reset_batch(batch_size)
+        return super(EmbeddingWebNavEnvironment, self).reset()
 
-    def _observe_batch(self):
+    def _observe(self):
         if self._just_reset:
-            self._query_embeddings = self._graph.get_query_embeddings(
-                    self._navigator._paths)
+            self._query_embedding = \
+                    self._graph.get_query_embeddings([self._navigator._path])[0]
             self._just_reset = False
 
-        current_page_embeddings = self._graph.get_article_embeddings(
-                self._navigator.cur_article_ids)
+        current_page_embedding = self._graph.get_article_embeddings(
+                [self._navigator.cur_article_id])[0]
         beam_embeddings = self._graph.get_article_embeddings(
-                self._navigator._beams)
+                self._navigator._beam)
 
-        return self._query_embeddings, current_page_embeddings, \
+        return self._query_embedding, current_page_embedding, \
                 beam_embeddings
 
     def reward_for_hop(self, source, target):
@@ -165,15 +152,11 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         return overlap * self.goal_reward
 
     def _reward(self, idx):
-        if self._navigator.successes[idx]:
+        if self._navigator.success:
             return self.goal_reward
-        if self._navigator.dones[idx]:
+        elif self._navigator.done:
             return 0.0
 
         return self.reward_for_hop(
-                self._navigator.cur_article_ids[idx],
-                self._navigator.targets[idx])
-
-    def _reward_batch(self, actions):
-        return np.array([self._reward(idx) for idx
-                         in range(len(self._query_embeddings))])
+                self._navigator.cur_article_id,
+                self._navigator.target_id)
