@@ -160,17 +160,19 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         return self._query_embeddings, current_page_embeddings, \
                 beam_embeddings
 
+    def reward_for_hop(self, source, target):
+        overlap = self._graph.get_relative_word_overlap(source, target)
+        return overlap * self.goal_reward
+
     def _reward(self, idx):
         if self._navigator.successes[idx]:
             return self.goal_reward
         if self._navigator.dones[idx]:
             return 0.0
 
-        # Calculate word overlap between new page and target page.
-        overlap = self._graph.get_relative_word_overlap(
+        return self.reward_for_hop(
                 self._navigator.cur_article_ids[idx],
                 self._navigator.targets[idx])
-        return overlap * self.goal_reward
 
     def _reward_batch(self, actions):
         return np.array([self._reward(idx) for idx
