@@ -77,6 +77,10 @@ class WebNavEnvironment(Env):
                     done=self._navigator.done,
                     reward=self._reward(action))
 
+    def step_wrapped(self, action, timestep):
+        # TODO make use of timestep?
+        return self.step(action)
+
     def _observe(self):
         # abstract
         raise NotImplementedError

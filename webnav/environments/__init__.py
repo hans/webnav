@@ -1,1 +1,2 @@
 from webnav.environments.webnav_env import EmbeddingWebNavEnvironment
+from webnav.environments.conversation import SituatedConversationEnvironment

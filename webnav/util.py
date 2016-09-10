@@ -13,4 +13,6 @@ def transpose_list(xs):
     """
     Transpose an `M * N` list of lists into an `N * M` list of lists.
     """
+    print np.asarray(xs).shape
+    print np.asarray(xs).T.shape
     return np.asarray(xs).T.tolist()
