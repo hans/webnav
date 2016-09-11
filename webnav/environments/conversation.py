@@ -107,6 +107,20 @@ class SituatedConversationEnvironment(Env):
 
         return (self._last_wrapped_obs, self._received[-1])
 
+    def describe_action(self, action):
+        """
+        Describe an action from its integer ID.
+        """
+
+        if action < self._env.action_space.n:
+            return WRAPPED, action
+        elif action < self._env.action_space.n + self.vocab_size:
+            token_id = action - self._env.action_space.n
+            return UTTER, token_id
+        else:
+            # Send message.
+            return SEND, None
+
     def step(self, action):
         """
         Args:
@@ -117,28 +131,25 @@ class SituatedConversationEnvironment(Env):
         reward = -1
         done = False
 
-        if action < self._env.action_space.n:
-            # Agent took an action in wrapped env.
-            self._events.append((WRAPPED, action))
+        action_type, data = self.describe_action(action)
+        self._events.append((action_type, data))
 
-            wrapped_step = self._env.step_wrapped(action, self._timestep)
+        if action_type == WRAPPED:
+            # Agent took an action in wrapped env.
+            wrapped_step = self._env.step_wrapped(data, self._timestep)
             self._last_wrapped_obs = wrapped_step.observation
 
             # Override reward and done states from this env.
             reward += wrapped_step.reward
             done = wrapped_step.done
-        elif action < self._env.action_space.n + self.vocab_size:
+        elif action_type == UTTER:
             # Agent chose to output a token.
-            token_id = action - self._env.action_space.n
-            self._events.append((UTTER, token_id))
-
-            self._message.append(token_id)
+            self._message.append(data)
 
             reward += 0.0
         else:
             # Agent chose to send the message.
             self._sent.append(self._message)
-            self._events.append((SEND, self._message))
 
             # Send the message and get a response.
             response, reward_delta = self._b_agent(self._env, self._message)
@@ -196,28 +207,26 @@ class SituatedConversationEnvironment(Env):
             wrapped_obs, received_message = self.observation_space.unflatten(observation)
             action = self.action_space.unflatten(action)
 
-    # def log_timestep(self, path, log_fn):
-    #     l = log_fn
-    #         out_str = None
-    #         if just_sent:
-    #             message_idxs = received_message.nonzero()[0]
-    #             l("B sent message \"%s\""
-    #               % "".join(self.vocab[idx] for idx in message_idxs))
-    #             just_sent = False
+            out_str = None
+            if just_sent:
+                message_idxs = received_message.nonzero()[0]
+                l("B sent message \"%s\""
+                  % "".join(self.vocab[idx] for idx in message_idxs))
+                just_sent = False
 
-    #         if action < self._env.action_space.n:
-    #             if hasattr(self._env, "action_names"):
-    #                 action_name = self._env.action_names[action]
-    #             else:
-    #                 action_name = str(action)
-    #             out_str = "A took action \"%s\"" % action_name
-    #         elif action < self._env.action_space.n + self.vocab_size:
-    #             char = self.vocab[action - self._env.action_space.n]
-    #             out_str = "A: %s" % char
-    #             a_message.append(char)
-    #         else:
-    #             out_str = "A sent message \"%s\"" % "".join(a_message)
-    #             just_sent = True
-    #             a_message = []
+            if action < self._env.action_space.n:
+                if hasattr(self._env, "action_names"):
+                    action_name = self._env.action_names[action]
+                else:
+                    action_name = str(action)
+                out_str = "A took action \"%s\"" % action_name
+            elif action < self._env.action_space.n + self.vocab_size:
+                char = self.vocab[action - self._env.action_space.n]
+                out_str = "A: %s" % char
+                a_message.append(char)
+            else:
+                out_str = "A sent message \"%s\"" % "".join(a_message)
+                just_sent = True
+                a_message = []
 
-    #         l("%-25s\t% 5f" % (out_str, reward))
+            l("%-25s\t% 5f" % (out_str, reward))
