@@ -128,7 +128,7 @@ class SituatedConversationEnvironment(Env):
         """
 
         # Base environment reward + per-turn penalty
-        reward = -1
+        reward = -0.25
         done = False
 
         action_type, data = self.describe_action(action)
