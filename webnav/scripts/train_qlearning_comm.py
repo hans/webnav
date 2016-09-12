@@ -18,6 +18,7 @@ from tqdm import tqdm, trange
 from webnav import web_graph
 from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversationEnvironment
+from webnav.environments.conversation import UTTER, WRAPPED, SEND
 from webnav.rnn_model import q_model
 from webnav.session import PartialRunSessionManager
 from webnav.util import discount_cumsum, transpose_list
@@ -70,6 +71,27 @@ def rollout(model, envs, sm, sess, args):
         masks_t = 1.0 - np.asarray(dones).astype(np.float32)
 
 
+def log_trajectory(trajectory, target, graph, log_f):
+    tqdm.write("Trajectory: (target %s)"
+                % graph.get_article_title(target), log_f)
+    for action_type, data, reward in trajectory:
+        stop = False
+        if action_type == WRAPPED:
+            article_id = data
+            desc = graph.get_article_title(data)
+            if data == graph.stop_sentinel:
+                stop = True
+        elif action_type == UTTER:
+            desc = "\"%s\"" % envs[0].vocab[data]
+        else:
+            desc = "%i %i" % (action, data)
+
+        tqdm.write("\t%-40s\t%.5f" % (desc, reward), log_f)
+
+        if stop:
+            break
+
+
 def eval(model, envs, sv, sm, sess, log_f, args):
     """
     Evaluate the given model on a test environment and log detailed results.
@@ -93,8 +115,6 @@ def eval(model, envs, sv, sm, sess, log_f, args):
     # Per-timestep loss accumulator.
     per_timestep_losses = np.zeros((args.path_length,))
     total_returns = 0.0
-
-    from webnav.environments.conversation import WRAPPED, UTTER, SEND
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         rewards = []
@@ -151,24 +171,7 @@ def eval(model, envs, sv, sm, sess, log_f, args):
 
     # Log random trajectories
     for traj, target in zip(trajectories, targets):
-        tqdm.write("Trajectory: (target %s)"
-                   % graph.get_article_title(target), log_f)
-        for action_type, data, reward in traj:
-            stop = False
-            if action_type == WRAPPED:
-                article_id = data
-                desc = graph.get_article_title(data)
-                if data == graph.stop_sentinel:
-                    stop = True
-            elif action_type == UTTER:
-                desc = "\"%s\"" % envs[0].vocab[data]
-            else:
-                desc = "%i %i" % (action, data)
-
-            tqdm.write("\t%-40s\t%.5f" % (desc, reward), log_f)
-
-            if stop:
-                break
+        log_trajectory(traj, target, graph, log_f)
 
     # Write summaries using supervisor.
     summary = tf.Summary()
