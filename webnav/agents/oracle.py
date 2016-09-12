@@ -10,7 +10,7 @@ class WebNavMaxOverlapAgent(Agent):
     article which has the highest n-gram overlap with the goal.
     """
 
-    def __init__(self, env, match_reward=1.0):
+    def __init__(self, env, match_reward=2.0):
         self.env = env
         self.beam_size = env.beam_size
         self.path_length = env.path_length
@@ -50,6 +50,13 @@ class WebNavMaxOverlapAgent(Agent):
             # TODO don't reward multiple queries on same node without moving in
             # between
             matched = True
+
+            # Evaluate overlap for each candidate.
+            source = env.cur_article_id
+            best_target = max(enumerate(env._navigator._beam),
+                    key=lambda (_, target): env.reward_for_hop(source, target))
+            action = best_target[0]
+            response = str(action)
 
         if matched:
             reward += self.match_reward
