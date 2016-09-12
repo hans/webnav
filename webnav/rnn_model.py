@@ -132,10 +132,12 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
         if cells is None:
             cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
 
-        # Prepare token biases, which is a very rough way to simulate
-        # conversation.
-        beta = tf.constant(1.0) # per-token bias value
+        # Prepare communication biases.
+        alpha = tf.get_variable("alpha", shape=()) # send bias
+        send_biases = tf.fill(tf.pack((batch_size, 1)), alpha)
+        beta = tf.get_variable("beta", shape=()) # per-token bias value
         token_biases = tf.fill(tf.pack((batch_size, agent.vocab_size)), beta)
+        comm_biases = tf.concat(1, [token_biases, send_biases])
 
         # Run stacked RNN.
         inputs = [tf.concat(1, [current_nodes_t, query])
@@ -167,7 +169,7 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
 
             # HACK: Just use constant token biases for now.
             # This should be state-dependent of course.
-            scores_t = tf.concat(1, [scores_t, token_biases])
+            scores_t = tf.concat(1, [scores_t, comm_biases])
 
             return scores_t, hid_t
 

@@ -18,7 +18,7 @@ from tqdm import tqdm, trange
 from webnav import web_graph
 from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversationEnvironment
-from webnav.environments.conversation import UTTER, WRAPPED, SEND
+from webnav.environments.conversation import UTTER, WRAPPED, SEND, RECEIVE
 from webnav.rnn_model import rnn_comm_model, q_model
 from webnav.session import PartialRunSessionManager
 from webnav.util import discount_cumsum, transpose_list
@@ -141,6 +141,8 @@ def log_trajectory(trajectory, target, env, log_f):
                 stop = True
         elif action_type == UTTER:
             desc = "\"%s\"" % env.vocab[data]
+        elif action_type == RECEIVE:
+            desc = "\t--> \"%s\"" % " ".join(env.vocab[idx] for idx in data)
         else:
             desc = "%i %i" % (action, data)
 
@@ -176,25 +178,34 @@ def eval(model, envs, sv, sm, log_f, args):
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         rewards = []
 
+        # Draw a random batch element to track for this batch.
+        sample_idx = np.random.choice(len(envs))
+        sample_env = envs[sample_idx]
+        sample_navigator = sample_env._env._navigator
+
         for iter_info in rollout(model, envs, sm, args):
             t, observations, _, actions_t, rewards_t, dones_t = iter_info
 
             # Set up to track a trajectory of a single batch element.
             if t == 0:
-                sample_idx = np.random.choice(len(envs))
-                sample_env = envs[sample_idx]
-                sample_navigator = sample_env._env._navigator
                 traj = [(WRAPPED, sample_navigator._path[0], 0.0)]
                 targets.append(sample_navigator.target_id)
 
             # Track our single batch element.
             if not dones_t[sample_idx]:
+                sample_done = True
+
                 action = actions_t[sample_idx]
                 action_type, data = sample_env.describe_action(action)
                 reward = rewards_t[sample_idx]
                 if action_type == WRAPPED:
                     traj.append((WRAPPED, sample_env._env.cur_article_id,
                                  reward))
+                elif action_type == SEND:
+                    traj.append((action_type, data, reward))
+
+                    recv_event = sample_env._events[-1]
+                    traj.append((RECEIVE, recv_event[-1], 0.0))
                 else:
                     traj.append((action_type, data, reward))
 
