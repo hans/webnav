@@ -50,29 +50,19 @@ def make_cell_zero_state(cell, batch_size):
 def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
               single_step_graph=False, name="model"):
     with tf.variable_scope(name):
-        # Prepare input placeholders.
-        if inputs is None:
-            # Embedding of current articles (pre-computed)
-            current_nodes = [tf.placeholder(tf.float32,
-                                            shape=(None, embedding_dim),
-                                            name="current_node_%i" % t)
-                            for t in range(num_timesteps)]
-            # Embedding of the query (pre-computed)
-            query = tf.placeholder(tf.float32, shape=(None, embedding_dim),
-                    name="query")
-            # Embedding of all candidates on the beam (pre-computed)
-            candidates = [tf.placeholder(tf.float32,
-                                        shape=(None, beam_size, embedding_dim),
-                                        name="candidates_%i" % t)
+        # Embedding of current articles (pre-computed)
+        current_nodes = [tf.placeholder(tf.float32,
+                                        shape=(None, embedding_dim),
+                                        name="current_node_%i" % t)
                         for t in range(num_timesteps)]
-        else:
-            query, current_nodes, candidates = inputs
-            query.get_shape().assert_is_compatible_with((None, embedding_dim))
-            current_nodes.get_shape().assert_is_compatible_with((num_timesteps, None, embedding_dim))
-            candidates.get_shape().assert_is_compatible_with((num_timesteps, None, beam_size, embedding_dim))
-
-            current_nodes = tf.unpack(current_nodes, num_timesteps)
-            candidates = tf.unpack(candidates, num_timesteps)
+        # Embedding of the query (pre-computed)
+        query = tf.placeholder(tf.float32, shape=(None, embedding_dim),
+                name="query")
+        # Embedding of all candidates on the beam (pre-computed)
+        candidates = [tf.placeholder(tf.float32,
+                                    shape=(None, beam_size, embedding_dim),
+                                    name="candidates_%i" % t)
+                    for t in range(num_timesteps)]
 
         batch_size = tf.shape(current_nodes[0])[0]
 
@@ -109,26 +99,15 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
 
             return scores_t, hid_t
 
-        if not single_step_graph:
-            for t in range(num_timesteps):
-                if t > 0: tf.get_variable_scope().reuse_variables()
+        for t in range(num_timesteps):
+            if t > 0: tf.get_variable_scope().reuse_variables()
 
-                scores_t, hid_vals = step(hid_vals, inputs[t])
-                scores.append(scores_t)
+            scores_t, hid_vals = step(hid_vals, inputs[t])
+            scores.append(scores_t)
 
-            inputs = (current_nodes, query, candidates)
-            outputs = (scores,)
-            return inputs, outputs
-        else:
-            hid_prev_single = [
-                    make_cell_state_placeholder(cell_i, "hid_prev_%i" % i)
-                    for i, cell_i in enumerate(cells)]
-            input_single = inputs[0]
-            scores_single, hid_single = step(hid_prev_single, input_single)
-
-            inputs = (current_nodes[0], query, candidates[0], hid_prev_single)
-            outputs = (scores_single, hid_single)
-            return inputs, outputs
+        inputs = (current_nodes, query, candidates)
+        outputs = (scores,)
+        return inputs, outputs
 
 
 def q_model(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
