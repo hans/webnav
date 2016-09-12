@@ -25,6 +25,7 @@ from webnav.util import discount_cumsum, transpose_list
 
 
 QCommModel = namedtuple("QCommModel", ["current_node", "query", "candidates",
+                                       "message",
                                        "scores", "rewards", "masks",
                                        "all_losses", "loss"])
 
@@ -41,12 +42,13 @@ def build_model(args, env):
     rnn_inputs, rnn_outputs = rnn_comm_model(args.beam_size, env.b_agent,
                                              args.path_length,
                                              webnav_env.embedding_dim)
-    current_node, query, candidates = rnn_inputs
-    all_inputs = current_node + candidates + [query]
+    current_node, query, candidates, message = rnn_inputs
+    all_inputs = current_node + candidates + message + [query]
     scores = rnn_outputs[0]
 
     q_tuple = q_model(all_inputs, scores, args.path_length, args.gamma)
-    model = QCommModel(current_node, query, candidates, *(q_tuple[1:]))
+    model = QCommModel(current_node, query, candidates, message,
+                       *(q_tuple[1:]))
     return model
 
 
@@ -109,6 +111,7 @@ def rollout(model, envs, sm, args):
             model.current_node[t]: current_nodes,
             model.candidates[t]: beams,
             model.masks[t]: masks_t,
+            model.message[t]: messages,
         }
         if t == 0:
             feed[model.query] = query
@@ -143,8 +146,8 @@ def log_trajectory(trajectory, target, env, log_f):
             desc = "\"%s\"" % env.vocab[data]
         elif action_type == RECEIVE:
             desc = "\t--> \"%s\"" % " ".join(env.vocab[idx] for idx in data)
-        else:
-            desc = "%i %i" % (action, data)
+        elif action_type == SEND:
+            desc = "%i %i" % (action_type, data)
 
         tqdm.write("\t%-40s\t%.5f" % (desc, reward), log_f)
 
@@ -274,7 +277,8 @@ def train(args):
             partial_fetches=model.scores + model.all_losses + \
                     [train_op, summary_op, model.loss],
             partial_feeds=model.current_node + model.candidates + \
-                    [model.query] + model.rewards + model.masks)
+                    [model.query] + model.message + model.rewards + \
+                    model.masks)
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 

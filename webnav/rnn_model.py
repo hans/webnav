@@ -127,14 +127,32 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
                                     name="candidates_%i" % t)
                     for t in range(num_timesteps)]
 
+        # Bag-of-words message
+        messages = [tf.placeholder(tf.float32, shape=(None, agent.vocab_size),
+                                   name="message_%i" % t)
+                    for t in range(num_timesteps)]
+
+        rnn_inputs = (current_nodes, query, candidates, messages)
+
+        #####################
+
         batch_size = tf.shape(current_nodes[0])[0]
 
         if cells is None:
             cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
 
+        # Project messages into embedding space.
+        # NB: Will fail for large vocabulary sizes.
+        with tf.op_scope(messages, "message_projection"):
+            message_embeddings = tf.get_variable(
+                    "embeddings", shape=(agent.vocab_size, embedding_dim))
+            messages_proj = [tf.matmul(messages_t, message_embeddings)
+                             for messages_t in messages]
+
         # Run stacked RNN.
-        inputs = [tf.concat(1, [current_nodes_t, query])
-                  for current_nodes_t in current_nodes]
+        inputs = [tf.concat(1, [current_nodes_t, query, messages_t])
+                  for current_nodes_t, messages_t
+                  in zip(current_nodes, messages_proj)]
         hid_vals = [cell.zero_state(batch_size, tf.float32)
                     for cell in cells]
         scores = []
@@ -178,9 +196,8 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
             scores_t, hid_vals = step(hid_vals, inputs[t])
             scores.append(scores_t)
 
-        inputs = (current_nodes, query, candidates)
         outputs = (scores,)
-        return inputs, outputs
+        return rnn_inputs, outputs
 
 def q_model(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
             name="model"):

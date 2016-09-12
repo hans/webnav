@@ -10,10 +10,11 @@ class WebNavMaxOverlapAgent(Agent):
     article which has the highest n-gram overlap with the goal.
     """
 
-    def __init__(self, env):
+    def __init__(self, env, match_reward=1.0):
         self.env = env
         self.beam_size = env.beam_size
         self.path_length = env.path_length
+        self.match_reward = match_reward
 
         # For now, vocab = set of valid messages
         # (all messages are 1 token long)
@@ -49,6 +50,9 @@ class WebNavMaxOverlapAgent(Agent):
             # TODO don't reward multiple queries on same node without moving in
             # between
             matched = True
+
+        if matched:
+            reward += self.match_reward
 
         response = response.split(" ")
         response = [self._token2idx[token] for token in response if token]
