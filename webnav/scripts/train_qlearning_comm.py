@@ -19,7 +19,7 @@ from webnav import web_graph
 from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversationEnvironment
 from webnav.environments.conversation import UTTER, WRAPPED, SEND
-from webnav.rnn_model import rnn_model, q_model
+from webnav.rnn_model import rnn_comm_model, q_model
 from webnav.session import PartialRunSessionManager
 from webnav.util import discount_cumsum, transpose_list
 
@@ -35,10 +35,12 @@ def build_model(args, env):
 
     Args:
         args: CLI args
-        env: Representative instance of wrapped environment
+        env: Representative instance of communication environment
     """
-    rnn_inputs, rnn_outputs = rnn_model(args.beam_size, args.path_length,
-                                        env.embedding_dim)
+    webnav_env = env._env
+    rnn_inputs, rnn_outputs = rnn_comm_model(args.beam_size, env.b_agent,
+                                             args.path_length,
+                                             webnav_env.embedding_dim)
     current_node, query, candidates = rnn_inputs
     all_inputs = current_node + candidates + [query]
     scores = rnn_outputs[0]
@@ -125,7 +127,9 @@ def rollout(model, envs, sm, args):
         masks_t = 1.0 - np.asarray(dones).astype(np.float32)
 
 
-def log_trajectory(trajectory, target, graph, log_f):
+def log_trajectory(trajectory, target, env, log_f):
+    graph = env._env._graph
+
     tqdm.write("Trajectory: (target %s)"
                 % graph.get_article_title(target), log_f)
     for action_type, data, reward in trajectory:
@@ -136,7 +140,7 @@ def log_trajectory(trajectory, target, graph, log_f):
             if data == graph.stop_sentinel:
                 stop = True
         elif action_type == UTTER:
-            desc = "\"%s\"" % envs[0].vocab[data]
+            desc = "\"%s\"" % env.vocab[data]
         else:
             desc = "%i %i" % (action, data)
 
@@ -224,7 +228,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
     # Log random trajectories
     for traj, target in zip(trajectories, targets):
-        log_trajectory(traj, target, graph, log_f)
+        log_trajectory(traj, target, envs[0], log_f)
 
     # Write summaries using supervisor.
     summary = tf.Summary()
@@ -239,7 +243,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
 def train(args):
     graph, envs, eval_envs = build_envs(args)
-    model = build_model(args, envs[0]._env)
+    model = build_model(args, envs[0])
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)

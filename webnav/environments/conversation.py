@@ -78,7 +78,7 @@ class SituatedConversationEnvironment(Env):
         action_space = Discrete(env.action_space.n + b_agent.vocab_size + 1)
         self._action_space = action_space
 
-        self._b_agent = b_agent
+        self.b_agent = b_agent
 
     @property
     def observation_space(self):
@@ -90,7 +90,7 @@ class SituatedConversationEnvironment(Env):
 
     def reset(self):
         # Reset agent.
-        self._b_agent.reset()
+        self.b_agent.reset()
 
         # Reset tracking state.
         self._timestep = 0
@@ -152,7 +152,7 @@ class SituatedConversationEnvironment(Env):
             self._sent.append(self._message)
 
             # Send the message and get a response.
-            response, reward_delta = self._b_agent(self._env, self._message)
+            response, reward_delta = self.b_agent(self._env, self._message)
             reward += reward_delta
 
             self._received.append(self._received_message_space.from_idx_sequence(response))

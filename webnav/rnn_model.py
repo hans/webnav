@@ -110,6 +110,77 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
         return inputs, outputs
 
 
+def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
+                   cells=None, name="model"):
+    with tf.variable_scope(name):
+        # Embedding of current articles (pre-computed)
+        current_nodes = [tf.placeholder(tf.float32,
+                                        shape=(None, embedding_dim),
+                                        name="current_node_%i" % t)
+                        for t in range(num_timesteps)]
+        # Embedding of the query (pre-computed)
+        query = tf.placeholder(tf.float32, shape=(None, embedding_dim),
+                name="query")
+        # Embedding of all candidates on the beam (pre-computed)
+        candidates = [tf.placeholder(tf.float32,
+                                    shape=(None, beam_size, embedding_dim),
+                                    name="candidates_%i" % t)
+                    for t in range(num_timesteps)]
+
+        batch_size = tf.shape(current_nodes[0])[0]
+
+        if cells is None:
+            cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
+
+        # Prepare token biases, which is a very rough way to simulate
+        # conversation.
+        beta = tf.constant(1.0) # per-token bias value
+        token_biases = tf.fill(tf.pack((batch_size, agent.vocab_size)), beta)
+
+        # Run stacked RNN.
+        inputs = [tf.concat(1, [current_nodes_t, query])
+                  for current_nodes_t in current_nodes]
+        hid_vals = [cell.zero_state(batch_size, tf.float32)
+                    for cell in cells]
+        scores = []
+
+        def step(hid_prev_t, input_t):
+            """
+            Build a single vertical-unrolled step in the RNN graph.
+            """
+            inp = input_t
+            hid_t = []
+            for i, (cell, hid_prev) in enumerate(zip(cells, hid_prev_t)):
+                inp, hid_t_i = cell(inp, hid_prev, scope="layer%i" % i)
+                hid_t.append(hid_t_i)
+
+            hid_vals.append(hid_t)
+
+            # Use top hidden layer to calculate scores.
+            last_out = inp
+            if cells[-1].output_size != embedding_dim:
+                last_out = layers.fully_connected(last_out,
+                        embedding_dim, activation_fn=tf.tanh,
+                        scope="state_projection")
+
+            scores_t = score_beam(last_out, candidates[t])
+
+            # HACK: Just use constant token biases for now.
+            # This should be state-dependent of course.
+            scores_t = tf.concat(1, [scores_t, token_biases])
+
+            return scores_t, hid_t
+
+        for t in range(num_timesteps):
+            if t > 0: tf.get_variable_scope().reuse_variables()
+
+            scores_t, hid_vals = step(hid_vals, inputs[t])
+            scores.append(scores_t)
+
+        inputs = (current_nodes, query, candidates)
+        outputs = (scores,)
+        return inputs, outputs
+
 def q_model(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
             name="model"):
     # Per-timestep non-discounted rewards
