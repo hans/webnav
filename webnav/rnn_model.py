@@ -117,7 +117,7 @@ def comm_scores(scores, state, name="communication"):
     """
     with tf.op_scope([scores, state], name):
         # HACK: Don't use wrapped action scores for now.
-        comm_state = last_out
+        comm_state = state
         comm_actions = agent.vocab_size + 1
         comm_scores_t = layers.fully_connected(comm_state, comm_actions,
                                                 activation_fn=None,
