@@ -48,7 +48,7 @@ def make_cell_zero_state(cell, batch_size):
 
 
 def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
-              single_step_graph=False, name="model"):
+              name="model"):
     with tf.variable_scope(name):
         # Embedding of current articles (pre-computed)
         current_nodes = [tf.placeholder(tf.float32,
