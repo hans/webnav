@@ -24,7 +24,7 @@ from webnav.session import PartialRunSessionManager
 from webnav.util import discount_cumsum, transpose_list
 
 
-def rollout(model, envs, sm, sess, args):
+def rollout(model, envs, sm, args):
     observations = [env.reset() for env in envs]
     batch_size = len(envs)
     embedding_dim = observations[0][0][0].size
@@ -56,8 +56,7 @@ def rollout(model, envs, sm, sess, args):
         if t == 0:
             feed[model.query] = query
 
-        scores_t = sess.partial_run(sm.partial_handle, model.scores[t],
-                                    feed)
+        scores_t = sm.run(model.scores[t], feed)
         actions = scores_t.argmax(axis=1)
 
         next_steps = [env.step(action)
@@ -92,7 +91,7 @@ def log_trajectory(trajectory, target, graph, log_f):
             break
 
 
-def eval(model, envs, sv, sm, sess, log_f, args):
+def eval(model, envs, sv, sm, log_f, args):
     """
     Evaluate the given model on a test environment and log detailed results.
 
@@ -101,7 +100,6 @@ def eval(model, envs, sv, sm, sess, log_f, args):
         env:
         sv: Supervisor
         sm: SessionManager (for partial runs)
-        sess: Session
         log_f:
         args:
     """
@@ -119,7 +117,7 @@ def eval(model, envs, sv, sm, sess, log_f, args):
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         rewards = []
 
-        for iter_info in rollout(model, envs, sm, sess, args):
+        for iter_info in rollout(model, envs, sm, args):
             t, observations, _, actions_t, rewards_t, dones_t = iter_info
 
             # Set up to track a trajectory of a single batch element.
@@ -147,14 +145,14 @@ def eval(model, envs, sv, sm, sess, log_f, args):
         fetches = model.all_losses
         feeds = {model.rewards[t]: rewards_t
                  for t, rewards_t in enumerate(rewards)}
-        losses_i = sess.partial_run(sm.partial_handle, fetches, feeds)
+        losses_i = sm.run(fetches, feeds)
 
         # Accumulate.
         per_timestep_losses += losses_i
         total_returns += np.array(rewards).sum(axis=0).mean()
         trajectories.append(traj)
 
-        sm.reset_partial_handle(sess)
+        sm.reset_partial_handle()
 
     per_timestep_losses /= float(args.n_eval_iters)
     total_returns /= float(args.n_eval_iters)
@@ -181,7 +179,7 @@ def eval(model, envs, sv, sm, sess, log_f, args):
     for t, loss_t in enumerate(per_timestep_losses):
         summary.value.add(tag="eval/loss_t%i" % t,
                           simple_value=np.asscalar(loss_t))
-    sv.summary_computed(sess, summary)
+    sv.summary_computed(sm.session, summary)
 
 
 def train(args):
@@ -255,11 +253,11 @@ def train(args):
                     tqdm.write("============================\n"
                                "Evaluating at batch %i, epoch %i"
                                % (i, e), log_f)
-                    eval(model, eval_envs, sv, sm, sess, log_f, args)
+                    eval(model, eval_envs, sv, sm, log_f, args)
                     log_f.flush()
 
                 rewards = []
-                for iter_info in rollout(model, envs, sm, sess, args):
+                for iter_info in rollout(model, envs, sm, args):
                     t, _, _, _, _, rewards_t = iter_info
                     rewards.append(rewards_t)
 
@@ -269,10 +267,9 @@ def train(args):
                 fetches = [train_op, summary_fetch, model.loss]
                 feeds = {model.rewards[t]: rewards_t
                          for t, rewards_t in enumerate(rewards)}
-                _, summary, loss = sess.partial_run(sm.partial_handle,
-                                                    fetches, feeds)
+                _, summary, loss = sm.run(fetches, feeds)
 
-                sm.reset_partial_handle(sess)
+                sm.reset_partial_handle()
 
                 if do_summary:
                     sv.summary_computed(sess, summary)
@@ -294,7 +291,7 @@ if __name__ == "__main__":
     p.add_argument("--n_epochs", default=3, type=int)
     p.add_argument("--n_eval_iters", default=2, type=int)
 
-    p.add_argument("--logdir", default="/tmp/webnav_qlearning")
+    p.add_argument("--logdir", default="/tmp/webnav_q_comm")
     p.add_argument("--eval_interval", default=100, type=int)
     p.add_argument("--summary_interval", default=100, type=int)
     p.add_argument("--n_eval_trajectories", default=5, type=int)

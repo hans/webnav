@@ -360,9 +360,20 @@ class PartialRunSessionManager(SessionManager):
 
         super(PartialRunSessionManager, self).__init__(*args, **kwargs)
 
-    def reset_partial_handle(self, session):
+    def reset_partial_handle(self, session=None):
+        session = session or self._session
+        self._session = session
+
         self.partial_handle = session.partial_run_setup(self._partial_fetches,
                                                         self._partial_feeds)
 
     def _setup_session(self, session):
+        self._session = session
         self.reset_partial_handle(session)
+
+    def run(self, *args, **kwargs):
+        return self._session.partial_run(self.partial_handle, *args, **kwargs)
+
+    @property
+    def session(self):
+        return self._session
