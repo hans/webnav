@@ -116,17 +116,16 @@ def comm_scores(scores, state, name="communication"):
     and agent hidden state.
     """
     with tf.name_scope([scores, state], name):
-        # Calculate communication probabilities as a function of the beam
-        # scores and the current state.
-        comm_state = tf.concat(1, [scores_t, last_out])
+        # HACK: Don't use wrapped action scores for now.
+        comm_state = last_out
         comm_actions = agent.vocab_size + 1
         comm_scores_t = layers.fully_connected(comm_state, comm_actions,
                                                 activation_fn=None,
                                                 scope="comm_scores")
         # HACK: Disable utterances with the numeric tokens
         comm_scores_t = tf.concat(1, [comm_scores_t[:, :1],
-                                        tf.zeros(tf.pack((batch_size, agent.vocab_size - 1))),
-                                        comm_scores_t[:, agent.vocab_size:]])
+                                      tf.zeros(tf.pack((batch_size, agent.vocab_size - 1))),
+                                      comm_scores_t[:, agent.vocab_size:]])
 
         return comm_scores_t
 
@@ -198,7 +197,6 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
                         scope="state_projection")
 
             scores_t = score_beam(last_out, candidates[t])
-
             comm_scores_t = comm_scores(scores_t, last_out)
 
             scores_t = tf.concat(1, [scores_t, comm_scores_t])
