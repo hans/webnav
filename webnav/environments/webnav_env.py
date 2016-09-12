@@ -159,7 +159,7 @@ class EmbeddingWebNavEnvironment(WebNavEnvironment):
         if self._navigator.success:
             return self.goal_reward
         elif self._navigator.done:
-            return 0.0
+            return -self.goal_reward
 
         return self.reward_for_hop(
                 self._navigator.cur_article_id,
