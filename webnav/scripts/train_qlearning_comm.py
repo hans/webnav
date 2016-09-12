@@ -147,7 +147,7 @@ def log_trajectory(trajectory, target, env, log_f):
         elif action_type == RECEIVE:
             desc = "\t--> \"%s\"" % " ".join(env.vocab[idx] for idx in data)
         elif action_type == SEND:
-            desc = "SEND" % (action_type, data)
+            desc = "SEND"
 
         tqdm.write("\t%-40s\t%.5f" % (desc, reward), log_f)
 
