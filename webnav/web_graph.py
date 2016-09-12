@@ -40,7 +40,7 @@ class EmbeddedWebGraph(object):
             if self._eval_cursor >= len(all_paths) - 1:
                 self._eval_cursor = 0
             ids = np.arange(self._eval_cursor,
-                            min(len(all_paths) - 1,
+                            min(len(all_paths),
                                 self._eval_cursor + batch_size))
             self._eval_cursor += batch_size
 
