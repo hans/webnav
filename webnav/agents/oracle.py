@@ -51,5 +51,5 @@ class WebNavMaxOverlapAgent(Agent):
             matched = True
 
         response = response.split(" ")
-        response = [self._token2idx[token] for token in response]
+        response = [self._token2idx[token] for token in response if token]
         return response, reward

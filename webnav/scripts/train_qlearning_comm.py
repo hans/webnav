@@ -182,6 +182,7 @@ def eval(model, envs, sv, sm, log_f, args):
         sample_idx = np.random.choice(len(envs))
         sample_env = envs[sample_idx]
         sample_navigator = sample_env._env._navigator
+        sample_done = False
 
         for iter_info in rollout(model, envs, sm, args):
             t, observations, _, actions_t, rewards_t, dones_t = iter_info
@@ -192,8 +193,8 @@ def eval(model, envs, sv, sm, log_f, args):
                 targets.append(sample_navigator.target_id)
 
             # Track our single batch element.
-            if not dones_t[sample_idx]:
-                sample_done = True
+            if not sample_done:
+                sample_done = dones_t[sample_idx]
 
                 action = actions_t[sample_idx]
                 action_type, data = sample_env.describe_action(action)
