@@ -115,7 +115,7 @@ def comm_scores(scores, state, name="communication"):
     Predict scores for communcation actions given wrapped environment actions
     and agent hidden state.
     """
-    with tf.name_scope([scores, state], name):
+    with tf.op_scope([scores, state], name):
         # HACK: Don't use wrapped action scores for now.
         comm_state = last_out
         comm_actions = agent.vocab_size + 1
