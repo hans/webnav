@@ -110,7 +110,7 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
         return inputs, outputs
 
 
-def comm_scores(scores, state, name="communication"):
+def comm_scores(scores, state, agent, name="communication"):
     """
     Predict scores for communcation actions given wrapped environment actions
     and agent hidden state.
@@ -197,7 +197,7 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
                         scope="state_projection")
 
             scores_t = score_beam(last_out, candidates[t])
-            comm_scores_t = comm_scores(scores_t, last_out)
+            comm_scores_t = comm_scores(scores_t, last_out, agent)
 
             scores_t = tf.concat(1, [scores_t, comm_scores_t])
 
