@@ -5,8 +5,7 @@ from tensorflow.contrib.layers import layers
 
 
 RLModel = namedtuple("RLModel",
-                     ["current_node", "query", "candidates",
-                      "scores",
+                     ["inputs", "scores",
                       "rewards", "masks",
                       "all_losses", "loss"])
 
@@ -132,15 +131,8 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
             return inputs, outputs
 
 
-def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
+def q_model(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
             name="model"):
-    # The Q-learning model uses the RNN scoring function as the
-    # Q-function.
-    rnn_inputs, rnn_outputs = rnn_model(beam_size, num_timesteps,
-                                        embedding_dim, name=name)
-    current_node, query, candidates = rnn_inputs
-    scores, = rnn_outputs
-
     # Per-timestep non-discounted rewards
     rewards = [tf.placeholder(tf.float32, (None,), name="rewards_%i" % t)
                for t in range(num_timesteps)]
@@ -182,7 +174,6 @@ def q_model(beam_size, num_timesteps, embedding_dim, gamma=0.99,
 
     tf.scalar_summary("loss", loss)
 
-    return RLModel(current_node, query, candidates,
-                   scores,
+    return RLModel(inputs, scores,
                    rewards, masks,
                    losses, loss)

@@ -19,9 +19,64 @@ from webnav import web_graph
 from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversationEnvironment
 from webnav.environments.conversation import UTTER, WRAPPED, SEND
-from webnav.rnn_model import q_model
+from webnav.rnn_model import rnn_model, q_model
 from webnav.session import PartialRunSessionManager
 from webnav.util import discount_cumsum, transpose_list
+
+
+QCommModel = namedtuple("QCommModel", ["current_node", "query", "candidates",
+                                       "scores", "rewards", "masks",
+                                       "all_losses", "loss"])
+
+
+def build_model(args, env):
+    """
+    Build a communicative Q-learning model.
+
+    Args:
+        args: CLI args
+        env: Representative instance of wrapped environment
+    """
+    rnn_inputs, rnn_outputs = rnn_model(args.beam_size, args.path_length,
+                                        env.embedding_dim)
+    current_node, query, candidates = rnn_inputs
+    all_inputs = current_node + candidates + [query]
+    scores = rnn_outputs[0]
+
+    q_tuple = q_model(all_inputs, scores, args.path_length, args.gamma)
+    model = QCommModel(current_node, query, candidates, *(q_tuple[1:]))
+    return model
+
+
+def build_envs(args):
+    if args.data_type == "wikinav":
+        if not args.qp_path:
+            raise ValueError("--qp_path required for wikinav data")
+        graph = web_graph.EmbeddedWikiNavGraph(args.wiki_path, args.qp_path,
+                                               args.emb_path, args.path_length)
+    elif args.data_type == "wikispeedia":
+        graph = web_graph.EmbeddedWikispeediaGraph(args.wiki_path,
+                                                   args.emb_path,
+                                                   args.path_length)
+    else:
+        raise ValueError("Invalid data_type %s" % args.data_type)
+
+    webnav_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                              is_training=True, oracle=False)
+                   for _ in range(args.batch_size)]
+    webnav_eval_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                                   is_training=False,
+                                                   oracle=False)
+                   for _ in range(args.batch_size)]
+
+    # Wrap core environment in conversation environment.
+    # TODO maybe don't need to replicate agents?
+    envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
+            for env in webnav_envs]
+    eval_envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
+                 for env in webnav_eval_envs]
+
+    return graph, envs, eval_envs
 
 
 def rollout(model, envs, sm, args):
@@ -183,35 +238,8 @@ def eval(model, envs, sv, sm, log_f, args):
 
 
 def train(args):
-    if args.data_type == "wikinav":
-        if not args.qp_path:
-            raise ValueError("--qp_path required for wikinav data")
-        graph = web_graph.EmbeddedWikiNavGraph(args.wiki_path, args.qp_path,
-                                               args.emb_path, args.path_length)
-    elif args.data_type == "wikispeedia":
-        graph = web_graph.EmbeddedWikispeediaGraph(args.wiki_path,
-                                                   args.emb_path,
-                                                   args.path_length)
-    else:
-        raise ValueError("Invalid data_type %s" % args.data_type)
-
-    webnav_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
-                                              is_training=True, oracle=False)
-                   for _ in range(args.batch_size)]
-    webnav_eval_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
-                                                   is_training=False,
-                                                   oracle=False)
-                   for _ in range(args.batch_size)]
-
-    # Wrap core environment in conversation environment.
-    # TODO maybe don't need to replicate agents?
-    envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
-            for env in webnav_envs]
-    eval_envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
-                 for env in webnav_eval_envs]
-
-    model = q_model(args.beam_size, args.path_length,
-                    webnav_envs[0].embedding_dim, args.gamma)
+    graph, envs, eval_envs = build_envs(args)
+    model = build_model(args, envs[0]._env)
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)
@@ -230,7 +258,7 @@ def train(args):
             partial_fetches=model.scores + model.all_losses + \
                     [train_op, summary_op, model.loss],
             partial_feeds=model.current_node + model.candidates + \
-                    model.rewards + model.masks + [model.query])
+                    [model.query] + model.rewards + model.masks)
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
