@@ -167,9 +167,15 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
 
             scores_t = score_beam(last_out, candidates[t])
 
-            # HACK: Just use constant token biases for now.
-            # This should be state-dependent of course.
-            scores_t = tf.concat(1, [scores_t, comm_biases])
+            # Calculate communication probabilities as a function of the beam
+            # scores and the current state.
+            comm_state = tf.concat(1, [scores_t, last_out])
+            comm_actions = agent.vocab_size + 1
+            comm_scores_t = layers.fully_connected(comm_state, comm_actions,
+                                                   activation_fn=None,
+                                                   scope="comm_scores")
+
+            scores_t = tf.concat(1, [scores_t, comm_scores_t])
 
             return scores_t, hid_t
 
