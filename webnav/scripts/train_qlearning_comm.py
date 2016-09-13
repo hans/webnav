@@ -66,9 +66,11 @@ def build_envs(args):
         raise ValueError("Invalid data_type %s" % args.data_type)
 
     webnav_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                              goal_reward=args.goal_reward,
                                               is_training=True, oracle=False)
                    for _ in range(args.batch_size)]
     webnav_eval_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                                   goal_reward=args.goal_reward,
                                                    is_training=False,
                                                    oracle=False)
                    for _ in range(args.batch_size)]
@@ -335,6 +337,7 @@ if __name__ == "__main__":
     p.add_argument("--batch_size", default=64, type=int)
     p.add_argument("--learning_rate", default=0.001, type=float)
     p.add_argument("--gamma", default=0.99, type=float)
+    p.add_argument("--goal_reward", default=10, type=float)
 
     p.add_argument("--n_epochs", default=3, type=int)
     p.add_argument("--n_eval_iters", default=2, type=int)
