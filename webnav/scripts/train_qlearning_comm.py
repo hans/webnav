@@ -20,18 +20,10 @@ from webnav import web_graph
 from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversationEnvironment
 from webnav.environments.conversation import UTTER, WRAPPED, SEND, RECEIVE
-from webnav.rnn_model import QCommModel
+from webnav.rnn_model import QCommModel, OracleCommModel
 from webnav.session import PartialRunSessionManager
 from webnav.util import rollout
 
-
-
-def gold_rollout(model, envs, sm, args):
-    """
-    Generate gold-policy rollouts with the oracle policy.
-    """
-    env = envs[0]
-    assert isinstance(env.agent, WebNavMaxOverlapAgent)
 
 
 def eval(model, envs, sv, sm, log_f, args):
@@ -95,11 +87,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
             rewards.append(rewards_t)
 
-        # Compute Q-learning loss.
-        fetches = model.all_losses
-        feeds = {model.rewards[t]: rewards_t
-                 for t, rewards_t in enumerate(rewards)}
-        losses_i = sm.run(fetches, feeds)
+        losses_i = np.asarray(model.loss(rewards))
 
         # Accumulate.
         per_timestep_losses += losses_i
@@ -139,6 +127,8 @@ def eval(model, envs, sv, sm, log_f, args):
 def train(args):
     graph, envs, eval_envs = util.build_webnav_conversation_envs(args)
     model = QCommModel.build(args, envs[0])
+
+    oracle_model = OracleCommModel.build(args, eval_envs[0])
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)
@@ -181,7 +171,7 @@ def train(args):
                     tqdm.write("============================\n"
                                "Evaluating at batch %i, epoch %i"
                                % (i, e), log_f)
-                    eval(model, eval_envs, sv, sm, log_f, args)
+                    eval(oracle_model, eval_envs, sv, sm, log_f, args)
                     log_f.flush()
 
                 rewards = []

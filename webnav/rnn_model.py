@@ -1,9 +1,11 @@
 from collections import namedtuple
 
 import numpy as np
+from rllab.misc.overrides import overrides
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
 
+from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.util import make_cell_zero_state, make_cell_state_placeholder
 
 
@@ -248,41 +250,24 @@ def q_learn(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
     return inputs, outputs
 
 
-class QCommModel(object):
-
-    def __init__(self, beam_size, environment, path_length,
-                 embedding_dim, gamma=0.99):
+class CommModel(object):
+    def __init__(self, beam_size, environment, path_length, embedding_dim,
+                 gamma=0.99):
         self.beam_size = beam_size
         self.path_length = path_length
         self.embedding_dim = embedding_dim
+        self.gamma = gamma
 
         self.env = environment
-        agent = self.env.b_agent
-
-        rnn_inputs, rnn_outputs = rnn_comm_model(beam_size, agent, path_length,
-                                                 embedding_dim)
-
-        self.current_node, self.query, self.candidates, \
-                self.message_sent, self.message_recv = rnn_inputs
-        self.scores, = rnn_outputs
-
-        all_inputs = self.current_node + self.candidates + \
-                self.message_sent + self.message_recv + [self.query]
-        q_inputs, q_outputs = q_learn(all_inputs, self.scores,
-                                      path_length, gamma)
-        self.rewards, self.masks = q_inputs
-        self.all_losses, self.loss = q_outputs
-
-        self.sm = None
+        self.agent = self.env.b_agent
 
     @property
     def all_feeds(self):
-        return self.current_node + self.candidates + self.message_sent + \
-                self.message_recv + [self.query] + self.rewards + self.masks
+        return []
 
     @property
     def all_fetches(self):
-        return self.scores + self.all_losses + [self.loss]
+        return []
 
     @classmethod
     def build(cls, args, env):
@@ -296,6 +281,63 @@ class QCommModel(object):
         webnav_env = env._env
         return cls(args.beam_size, env, args.path_length,
                    webnav_env.embedding_dim, args.gamma)
+
+    def step(self, t, observations, masks):
+        """
+        Compute Q(s, *) for a batch of states.
+
+        Args:
+            t: timestep integer
+            observations: List of env observations
+            masks: Training cost masks for the current timestep
+        """
+        raise NotImplementedError
+
+    def loss(self, rewards):
+        """
+        Compute Q-learning loss after a rollout given this reward sequence.
+
+        Args:
+            rewards: Sequence of `batch_size`-length per-timestep reward arrays
+
+        Returns:
+            losses: Sequence of masked loss scalars
+        """
+        raise NotImplementedError
+
+
+class QCommModel(CommModel):
+
+    def __init__(self, *args, **kwargs):
+        super(QCommModel, self).__init__(*args, **kwargs)
+
+        rnn_inputs, rnn_outputs = rnn_comm_model(self.beam_size, self.agent,
+                                                 self.path_length,
+                                                 self.embedding_dim)
+
+        self.current_node, self.query, self.candidates, \
+                self.message_sent, self.message_recv = rnn_inputs
+        self.scores, = rnn_outputs
+
+        all_inputs = self.current_node + self.candidates + \
+                self.message_sent + self.message_recv + [self.query]
+        q_inputs, q_outputs = q_learn(all_inputs, self.scores,
+                                      self.path_length, self.gamma)
+        self.rewards, self.masks = q_inputs
+        self.all_losses, self.loss = q_outputs
+
+        self.sm = None
+
+    @property
+    @overrides
+    def all_feeds(self):
+        return self.current_node + self.candidates + self.message_sent + \
+                self.message_recv + [self.query] + self.rewards + self.masks
+
+    @property
+    @overrides
+    def all_fetches(self):
+        return self.scores + self.all_losses + [self.loss]
 
     def _reset_batch(self, batch_size):
         """
@@ -313,15 +355,8 @@ class QCommModel(object):
         self._d_message_sent = np.zeros((batch_size, self.env.vocab_size))
         self._d_message_recv = np.empty((batch_size, self.env.vocab_size))
 
-    def __call__(self, t, observations, masks):
-        """
-        Compute Q(s, *) for a batch of states.
-
-        Args:
-            t: timestep integer
-            observations: List of env observations
-            masks: Training cost masks for the current timestep
-        """
+    @overrides
+    def step(self, t, observations, masks):
         batch_size = len(observations)
         if t == 0:
             self._reset_batch(batch_size)
@@ -349,3 +384,72 @@ class QCommModel(object):
         # Calculate action scores.
         scores_t = self.sm.run(self.scores[t], feed)
         return scores_t
+
+    def loss(self, rewards):
+        fetches = model.all_losses
+        feeds = {model.rewards[t]: rewards_t
+                 for t, rewards_t in enumerate(rewards)}
+        losses = sm.run(fetches, feeds)
+        return losses
+
+
+class OracleCommModel(CommModel):
+
+    """
+    An oracle model for operating with the WebNavMaxOverlapAgent.
+    """
+
+    # FSM states
+    QUERY = 0
+    SEND = 1
+    RECEIVE = 2
+
+    def __init__(self, *args, **kwargs):
+        super(OracleCommModel, self).__init__(*args, **kwargs)
+
+        assert isinstance(self.agent, WebNavMaxOverlapAgent)
+
+    def _reset_batch(self, batch_size):
+        self._state = self.QUERY
+        self._batch_size = batch_size
+
+        # Prepare score return for sending query
+        self._send_query = np.zeros((batch_size, self.env.action_space.n))
+        self._send_query[:, -1] = 1
+
+        # Prepare score return when we want to utter "which"
+        self._query_which = np.zeros((batch_size, self.env.action_space.n))
+        which_idx = self.agent._token2idx["which"]
+        which_action = self.env._env.action_space.n + which_idx
+        self._query_which[:, which_action] = 1
+
+    def step(self, t, observations, masks):
+        if t == 0:
+            self._reset_batch(len(observations))
+
+        if self._state == self.SEND:
+            assert t % 3 == 1
+            self._state = self.RECEIVE
+            return self._send_query
+        elif self._state == self.RECEIVE:
+            assert t % 3 == 2
+            # Read the response from agent.
+            messages = [obs_i[1].nonzero()[0] for obs_i in observations]
+            action_idxs = messages
+
+            scores = np.zeros((self._batch_size, self.env.action_space.n))
+            scores[np.arange(self._batch_size), action_idxs] = 1.0
+
+            self._state = self.QUERY
+            return scores
+        elif self._state == self.QUERY:
+            assert t % 3 == 0
+            # Send "which" query
+            which_idx = self.agent._token2idx["which"]
+            which_action = self.env._env.action_space.n + which_idx
+
+            self._state = self.SEND
+            return self._query_which
+
+    def loss(self, rewards):
+        return 0.0
