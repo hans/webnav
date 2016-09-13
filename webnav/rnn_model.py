@@ -125,7 +125,7 @@ def comm_scores(scores, state, agent, name="communication"):
         # HACK: Disable utterances with the numeric tokens
         batch_size = tf.shape(scores)[0]
         comm_scores_t = tf.concat(1, [comm_scores_t[:, :1],
-                                      tf.zeros(tf.pack((batch_size, agent.vocab_size - 1))),
+                                      tf.fill(tf.pack((batch_size, agent.vocab_size - 1)), -100.0),
                                       comm_scores_t[:, agent.vocab_size:]])
 
         return comm_scores_t
