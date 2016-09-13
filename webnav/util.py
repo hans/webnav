@@ -1,10 +1,12 @@
 import numpy as np
 import scipy.signal
+from tqdm import tqdm
 
 from webnav import web_graph
 from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.environments import EmbeddingWebNavEnvironment
 from webnav.environments import SituatedConversationEnvironment
+from webnav.environments.conversation import SEND, RECEIVE, UTTER, WRAPPED
 
 
 def discount_cumsum(x, discount):
@@ -55,4 +57,29 @@ def build_webnav_conversation_envs(args):
                  for env in webnav_eval_envs]
 
     return graph, envs, eval_envs
+
+
+def log_trajectory(trajectory, target, env, log_f):
+    graph = env._env._graph
+
+    tqdm.write("Trajectory: (target %s)"
+                % graph.get_article_title(target), log_f)
+    for action_type, data, reward in trajectory:
+        stop = False
+        if action_type == WRAPPED:
+            action_id, article_id = data
+            desc = graph.get_article_title(article_id)
+            if data == graph.stop_sentinel:
+                stop = True
+        elif action_type == UTTER:
+            desc = "\"%s\"" % env.vocab[data]
+        elif action_type == RECEIVE:
+            desc = "\t--> \"%s\"" % " ".join(env.vocab[idx] for idx in data)
+        elif action_type == SEND:
+            desc = "SEND"
+
+        tqdm.write("\t%-40s\t%.5f" % (desc, reward), log_f)
+
+        if stop:
+            break
 

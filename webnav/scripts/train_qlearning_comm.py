@@ -99,31 +99,6 @@ def rollout(model, envs, sm, args):
         masks_t = 1.0 - np.asarray(dones).astype(np.float32)
 
 
-def log_trajectory(trajectory, target, env, log_f):
-    graph = env._env._graph
-
-    tqdm.write("Trajectory: (target %s)"
-                % graph.get_article_title(target), log_f)
-    for action_type, data, reward in trajectory:
-        stop = False
-        if action_type == WRAPPED:
-            article_id = data
-            desc = graph.get_article_title(data)
-            if data == graph.stop_sentinel:
-                stop = True
-        elif action_type == UTTER:
-            desc = "\"%s\"" % env.vocab[data]
-        elif action_type == RECEIVE:
-            desc = "\t--> \"%s\"" % " ".join(env.vocab[idx] for idx in data)
-        elif action_type == SEND:
-            desc = "SEND"
-
-        tqdm.write("\t%-40s\t%.5f" % (desc, reward), log_f)
-
-        if stop:
-            break
-
-
 def eval(model, envs, sv, sm, log_f, args):
     """
     Evaluate the given model on a test environment and log detailed results.
@@ -212,7 +187,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
     # Log random trajectories
     for traj, target in zip(trajectories, targets):
-        log_trajectory(traj, target, envs[0], log_f)
+        util.log_trajectory(traj, target, envs[0], log_f)
 
     # Write summaries using supervisor.
     summary = tf.Summary()
