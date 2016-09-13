@@ -1,6 +1,11 @@
 import numpy as np
 import scipy.signal
 
+from webnav import web_graph
+from webnav.agents.oracle import WebNavMaxOverlapAgent
+from webnav.environments import EmbeddingWebNavEnvironment
+from webnav.environments import SituatedConversationEnvironment
+
 
 def discount_cumsum(x, discount):
     # See https://docs.scipy.org/doc/scipy/reference/tutorial/signal.html#difference-eq$
