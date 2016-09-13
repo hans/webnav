@@ -68,7 +68,7 @@ def log_trajectory(trajectory, target, env, log_f):
         stop = False
         if action_type == WRAPPED:
             action_id, article_id = data
-            desc = graph.get_article_title(article_id)
+            desc = "%s (%i)" % (graph.get_article_title(article_id), action_id)
             if data == graph.stop_sentinel:
                 stop = True
         elif action_type == UTTER:

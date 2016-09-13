@@ -279,6 +279,7 @@ if __name__ == "__main__":
     p.add_argument("--batch_size", default=64, type=int)
     p.add_argument("--learning_rate", default=0.001, type=float)
     p.add_argument("--gamma", default=0.99, type=float)
+    p.add_argument("--goal_reward", default=10, type=float)
 
     p.add_argument("--n_epochs", default=3, type=int)
     p.add_argument("--n_eval_iters", default=2, type=int)
