@@ -25,7 +25,7 @@ from webnav.session import PartialRunSessionManager
 
 
 QCommModel = namedtuple("QCommModel", ["current_node", "query", "candidates",
-                                       "message",
+                                       "message_sent", "message_recv",
                                        "scores", "rewards", "masks",
                                        "all_losses", "loss"])
 
@@ -42,12 +42,12 @@ def build_model(args, env):
     rnn_inputs, rnn_outputs = rnn_comm_model(args.beam_size, env.b_agent,
                                              args.path_length,
                                              webnav_env.embedding_dim)
-    current_node, query, candidates, message = rnn_inputs
-    all_inputs = current_node + candidates + message + [query]
+    current_node, query, candidates, message_sent, message_recv = rnn_inputs
+    all_inputs = current_node + candidates + message_sent + message_recv + [query]
     scores = rnn_outputs[0]
 
     q_tuple = q_model(all_inputs, scores, args.path_length, args.gamma)
-    model = QCommModel(current_node, query, candidates, message,
+    model = QCommModel(current_node, query, candidates, message_sent, message_recv,
                        *(q_tuple[1:]))
     return model
 
@@ -64,7 +64,9 @@ def rollout(model, envs, sm, args, epsilon=0.1):
     current_nodes = np.empty((batch_size, embedding_dim))
     beams = np.empty((batch_size, beam_size, embedding_dim))
 
-    messages = np.empty((batch_size, env.vocab_size))
+    message_sent = np.zeros((batch_size, env.vocab_size))
+    message_recv = np.empty((batch_size, env.vocab_size))
+    np.set_printoptions(threshold=np.inf)
 
     for t in range(args.path_length):
         for i, obs_i in enumerate(observations):
@@ -74,18 +76,21 @@ def rollout(model, envs, sm, args, epsilon=0.1):
             query[i] = query_i
             current_nodes[i] = current_node_i
             beams[i] = beam_i
-            messages[i] = message
+            message_recv[i] = message
 
         feed = {
             model.current_node[t]: current_nodes,
             model.candidates[t]: beams,
             model.masks[t]: masks_t,
-            model.message[t]: messages,
+            model.message_sent[t]: message_sent,
+            model.message_recv[t]: message_recv,
         }
         if t == 0:
             feed[model.query] = query
 
+        # Calculate action scores.
         scores_t = sm.run(model.scores[t], feed)
+        # print scores_t
         actions = scores_t.argmax(axis=1)
         if epsilon > 0:
             actions_rand = np.random.randint(env.action_space.n,
@@ -93,6 +98,15 @@ def rollout(model, envs, sm, args, epsilon=0.1):
             mask = np.random.random(size=batch_size) < epsilon
             actions = np.choose(mask, (actions_rand, actions))
 
+        # Track if we sent a message.
+        message_sent.fill(0)
+        for i, action in enumerate(actions):
+            action_type, data = env.describe_action(action)
+            if action_type == SEND:
+                for token in data:
+                    message_sent[i, token] = 1.0
+
+        # Take the step and collect new observation data
         next_steps = [env.step(action)
                       for env, action in zip(envs, actions)]
         obs_next, rewards_t, dones_t, _ = map(list, zip(*next_steps))
@@ -102,6 +116,8 @@ def rollout(model, envs, sm, args, epsilon=0.1):
         observations = [next_step.observation for next_step in next_steps]
         dones = [next_step.done for next_step in next_steps]
         masks_t = 1.0 - np.asarray(dones).astype(np.float32)
+
+            # sys.exit(1)
 
 
 def eval(model, envs, sv, sm, log_f, args):
@@ -227,8 +243,8 @@ def train(args):
             partial_fetches=model.scores + model.all_losses + \
                     [train_op, summary_op, model.loss],
             partial_feeds=model.current_node + model.candidates + \
-                    [model.query] + model.message + model.rewards + \
-                    model.masks)
+                    [model.query] + model.message_sent + model.message_recv + \
+                    model.rewards + model.masks)
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 

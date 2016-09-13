@@ -148,12 +148,16 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
                                     name="candidates_%i" % t)
                     for t in range(num_timesteps)]
 
-        # Bag-of-words message
-        messages = [tf.placeholder(tf.float32, shape=(None, agent.vocab_size),
-                                   name="message_%i" % t)
-                    for t in range(num_timesteps)]
+        # Bag-of-words messages sent/received
+        messages_sent = [tf.placeholder(tf.float32, shape=(None, agent.vocab_size),
+                                        name="message_sent_%i" % t)
+                         for t in range(num_timesteps)]
+        messages_recv = [tf.placeholder(tf.float32, shape=(None, agent.vocab_size),
+                                        name="message_recv_%i" % t)
+                         for t in range(num_timesteps)]
 
-        rnn_inputs = (current_nodes, query, candidates, messages)
+        rnn_inputs = (current_nodes, query, candidates,
+                      messages_sent, messages_recv)
 
         #####################
 
@@ -164,16 +168,19 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
 
         # Project messages into embedding space.
         # NB: Will fail for large vocabulary sizes.
-        with tf.op_scope(messages, "message_projection"):
+        with tf.op_scope(messages_sent + messages_recv, "message_projection"):
             message_embeddings = tf.get_variable(
                     "embeddings", shape=(agent.vocab_size, embedding_dim))
-            messages_proj = [tf.matmul(messages_t, message_embeddings)
-                             for messages_t in messages]
+            messages_sent_proj = [tf.matmul(messages_t, message_embeddings)
+                                  for messages_t in messages_sent]
+            messages_recv_proj = [tf.matmul(messages_t, message_embeddings)
+                                  for messages_t in messages_recv]
 
         # Run stacked RNN.
-        inputs = [tf.concat(1, [current_nodes_t, query, messages_t])
-                  for current_nodes_t, messages_t
-                  in zip(current_nodes, messages_proj)]
+        inputs = [tf.concat(1, [current_nodes_t, query,
+                                message_sent_t, message_recv_t])
+                  for current_nodes_t, message_sent_t, message_recv_t
+                  in zip(current_nodes, messages_sent_proj, messages_recv_proj)]
         hid_vals = [cell.zero_state(batch_size, tf.float32)
                     for cell in cells]
         scores = []
@@ -200,7 +207,7 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
             scores_t = score_beam(scoring_state, candidates[t])
 
             # HACK: add position-aware delta based on message
-            scores_t += layers.fully_connected(messages_proj[t],
+            scores_t += layers.fully_connected(messages_recv_proj[t],
                     beam_size, activation_fn=None,
                     scope="position_aware_score_delta")
 

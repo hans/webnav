@@ -119,7 +119,7 @@ class SituatedConversationEnvironment(Env):
             return UTTER, token_id
         else:
             # Send message.
-            return SEND, None
+            return SEND, self._message[:]
 
     def step(self, action):
         """
