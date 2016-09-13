@@ -44,9 +44,11 @@ def build_webnav_conversation_envs(args):
         raise ValueError("Invalid data_type %s" % args.data_type)
 
     webnav_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                              goal_reward=args.goal_reward,
                                               is_training=True, oracle=False)
                    for _ in range(args.batch_size)]
     webnav_eval_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
+                                                   goal_reward=args.goal_reward,
                                                    is_training=False,
                                                    oracle=False)
                    for _ in range(args.batch_size)]

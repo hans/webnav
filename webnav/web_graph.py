@@ -166,7 +166,8 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
             # Random embeddings.
             self.embedding_dim = 128 # fixed for now
             shape = (len(data["articles"]), self.embedding_dim)
-            embeddings = np.random.random(shape) * 2.0 - 1.0
+            # Match Wikispeedia embedding distribution
+            embeddings = np.random.normal(scale=0.25, size=shape)
             self.embeddings = embeddings
 
         articles = [EmbeddedArticle(
