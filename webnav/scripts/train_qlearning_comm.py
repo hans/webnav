@@ -52,45 +52,17 @@ def build_model(args, env):
     return model
 
 
-def rollout(model, envs, sm, args, epsilon=0.1):
+def rollout(q_fn, envs, sm, args, epsilon=0.1):
     observations = [env.reset() for env in envs]
     batch_size = len(envs)
-    embedding_dim = observations[0][0][0].size
-    beam_size = observations[0][0][2].shape[0]
 
     masks_t = [1.0] * batch_size
 
-    query = np.empty((batch_size, embedding_dim))
-    current_nodes = np.empty((batch_size, embedding_dim))
-    beams = np.empty((batch_size, beam_size, embedding_dim))
-
-    message_sent = np.zeros((batch_size, env.vocab_size))
-    message_recv = np.empty((batch_size, env.vocab_size))
-    np.set_printoptions(threshold=np.inf)
-
     for t in range(args.path_length):
-        for i, obs_i in enumerate(observations):
-            nav_obs, message = obs_i
-            query_i, current_node_i, beam_i = nav_obs
-
-            query[i] = query_i
-            current_nodes[i] = current_node_i
-            beams[i] = beam_i
-            message_recv[i] = message
-
-        feed = {
-            model.current_node[t]: current_nodes,
-            model.candidates[t]: beams,
-            model.masks[t]: masks_t,
-            model.message_sent[t]: message_sent,
-            model.message_recv[t]: message_recv,
-        }
-        if t == 0:
-            feed[model.query] = query
-
-        # Calculate action scores.
-        scores_t = sm.run(model.scores[t], feed)
+        scores_t = q_fn(t, observations, masks_t)
         # print scores_t
+
+        # Epsilon-greedy sampling
         actions = scores_t.argmax(axis=1)
         if epsilon > 0:
             actions_rand = np.random.randint(env.action_space.n,
@@ -98,13 +70,14 @@ def rollout(model, envs, sm, args, epsilon=0.1):
             mask = np.random.random(size=batch_size) < epsilon
             actions = np.choose(mask, (actions_rand, actions))
 
-        # Track if we sent a message.
-        message_sent.fill(0)
-        for i, action in enumerate(actions):
-            action_type, data = env.describe_action(action)
-            if action_type == SEND:
-                for token in data:
-                    message_sent[i, token] = 1.0
+        # TODO integrate in environment
+        # # Track if we sent a message.
+        # message_sent.fill(0)
+        # for i, action in enumerate(actions):
+        #     action_type, data = env.describe_action(action)
+        #     if action_type == SEND:
+        #         for token in data:
+        #             message_sent[i, token] = 1.0
 
         # Take the step and collect new observation data
         next_steps = [env.step(action)
@@ -118,6 +91,68 @@ def rollout(model, envs, sm, args, epsilon=0.1):
         masks_t = 1.0 - np.asarray(dones).astype(np.float32)
 
             # sys.exit(1)
+
+
+def model_q_fn(model, sm, env, t, observations, masks):
+    """
+    Compute Q(s, *) for a batch of states.
+
+    Args:
+        model: QCommModel instance
+        sm: PartialRunSessionManager
+        env: Representative situated conversation environment
+        t: timestep integer
+        observations: List of env observations
+        masks: Training cost masks for the current timestep
+    """
+    # TODO make into a class, this is silly
+    batch_size = len(observations)
+    # Tag some helper ndarrays onto the function that we can reuse
+    if not hasattr(model_q_fn, "query") or len(model_q_fn.query) != batch_size:
+        if t > 0:
+            raise RuntimeError("batch size changed during rollout "
+                               "or unexpected internal error")
+
+        embedding_dim = observations[0][0][0].size
+        beam_size = observations[0][0][2].shape[0]
+        model_q_fn.query = np.empty((batch_size, embedding_dim))
+        model_q_fn.current_nodes = np.empty((batch_size, embedding_dim))
+        model_q_fn.beams = np.empty((batch_size, beam_size, embedding_dim))
+
+        model_q_fn.message_sent = np.zeros((batch_size, env.vocab_size))
+        model_q_fn.message_recv = np.empty((batch_size, env.vocab_size))
+
+    for i, obs_i in enumerate(observations):
+        nav_obs, message = obs_i
+        query_i, current_node_i, beam_i = nav_obs
+
+        model_q_fn.query[i] = query_i
+        model_q_fn.current_nodes[i] = current_node_i
+        model_q_fn.beams[i] = beam_i
+        model_q_fn.message_recv[i] = message
+
+    feed = {
+        model.current_node[t]: model_q_fn.current_nodes,
+        model.candidates[t]: model_q_fn.beams,
+        model.masks[t]: masks,
+        model.message_sent[t]: model_q_fn.message_sent,
+        model.message_recv[t]: model_q_fn.message_recv,
+    }
+    if t == 0:
+        feed[model.query] = model_q_fn.query
+
+    # Calculate action scores.
+    scores_t = sm.run(model.scores[t], feed)
+
+    return scores_t
+
+
+def gold_rollout(model, envs, sm, args):
+    """
+    Generate gold-policy rollouts with the oracle policy.
+    """
+    env = envs[0]
+    assert isinstance(env.agent, WebNavMaxOverlapAgent)
 
 
 def eval(model, envs, sv, sm, log_f, args):
@@ -135,6 +170,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
     assert not envs[0]._env.is_training
     graph = envs[0]._env._graph
+    q_fn = partial(model_q_fn, model, sm, envs[0])
 
     trajectories, targets = [], []
     losses = []
@@ -152,7 +188,7 @@ def eval(model, envs, sv, sm, log_f, args):
         sample_navigator = sample_env._env._navigator
         sample_done = False
 
-        for iter_info in rollout(model, envs, sm, args, epsilon=0):
+        for iter_info in rollout(q_fn, envs, sm, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t = iter_info
 
             # Set up to track a trajectory of a single batch element.
@@ -248,6 +284,9 @@ def train(args):
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
+    # Prepare executable Q-function.
+    q_fn = partial(model_q_fn, model, sm, envs[0])
+
     # Open a file for detailed progress logging.
     import sys
     log_f = sys.stdout # open(os.path.join(args.logdir, "debug.log"), "w")
@@ -271,7 +310,7 @@ def train(args):
                     log_f.flush()
 
                 rewards = []
-                for iter_info in rollout(model, envs, sm, args):
+                for iter_info in rollout(q_fn, envs, sm, args):
                     t, _, _, _, _, rewards_t = iter_info
                     rewards.append(rewards_t)
 
