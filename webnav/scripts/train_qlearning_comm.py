@@ -52,7 +52,7 @@ def build_model(args, env):
     return model
 
 
-def rollout(model, envs, sm, args):
+def rollout(model, envs, sm, args, epsilon=0.1):
     observations = [env.reset() for env in envs]
     batch_size = len(envs)
     embedding_dim = observations[0][0][0].size
@@ -87,6 +87,11 @@ def rollout(model, envs, sm, args):
 
         scores_t = sm.run(model.scores[t], feed)
         actions = scores_t.argmax(axis=1)
+        if epsilon > 0:
+            actions_rand = np.random.randint(env.action_space.n,
+                                             size=batch_size)
+            mask = np.random.random(size=batch_size) < epsilon
+            actions = np.choose(mask, (actions_rand, actions))
 
         next_steps = [env.step(action)
                       for env, action in zip(envs, actions)]
@@ -131,7 +136,7 @@ def eval(model, envs, sv, sm, log_f, args):
         sample_navigator = sample_env._env._navigator
         sample_done = False
 
-        for iter_info in rollout(model, envs, sm, args):
+        for iter_info in rollout(model, envs, sm, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t = iter_info
 
             # Set up to track a trajectory of a single batch element.
