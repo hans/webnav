@@ -136,7 +136,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
             # Set up to track a trajectory of a single batch element.
             if t == 0:
-                traj = [(WRAPPED, sample_navigator._path[0], 0.0)]
+                traj = [(WRAPPED, (0, sample_navigator._path[0]), 0.0)]
                 targets.append(sample_navigator.target_id)
 
             # Track our single batch element.
@@ -147,7 +147,8 @@ def eval(model, envs, sv, sm, log_f, args):
                 action_type, data = sample_env.describe_action(action)
                 reward = rewards_t[sample_idx]
                 if action_type == WRAPPED:
-                    traj.append((WRAPPED, sample_env._env.cur_article_id,
+                    traj.append((WRAPPED,
+                                (data, sample_env._env.cur_article_id),
                                  reward))
                 elif action_type == SEND:
                     traj.append((action_type, data, reward))
