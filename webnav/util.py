@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.signal
+import tensorflow as tf
 from tqdm import tqdm
 
 from webnav import web_graph
@@ -14,15 +15,6 @@ def discount_cumsum(x, discount):
     # Here, we have y[t] - discount*y[t+1] = x[t]
     # or rev(y)[t] - discount*rev(y)[t-1] = rev(x)[t]
     return scipy.signal.lfilter([1], [1, -discount], x[::-1], axis=0)[::-1]
-
-
-def transpose_list(xs):
-    """
-    Transpose an `M * N` list of lists into an `N * M` list of lists.
-    """
-    print np.asarray(xs).shape
-    print np.asarray(xs).T.shape
-    return np.asarray(xs).T.tolist()
 
 
 def build_webnav_conversation_envs(args):
@@ -118,4 +110,28 @@ def rollout(q_fn, envs, args, epsilon=0.1):
         observations = [next_step.observation for next_step in next_steps]
         dones = [next_step.done for next_step in next_steps]
         masks_t = 1.0 - np.asarray(dones).astype(np.float32)
+
+
+def make_cell_state_placeholder(cell, name):
+    if isinstance(cell.state_size, int):
+        return tf.placeholder(tf.float32, shape=(None, cell.state_size),
+                              name=name)
+    elif isinstance(cell.state_size, tuple):
+        return tuple([tf.placeholder(tf.float32, shape=(None, size_i),
+                                     name="%s/cell_%i" % (name, i))
+                      for i, size_i in enumerate(cell.state_size)])
+    else:
+        raise ValueError("Unknown cell state size declaration %s"
+                         % cell.state_size)
+
+
+def make_cell_zero_state(cell, batch_size):
+    if isinstance(cell.state_size, int):
+        return np.zeros((batch_size, cell.state_size), dtype=np.float32)
+    elif isinstance(cell.state_size, tuple):
+        return tuple([np.zeros((batch_size, state_i))
+                      for state_i in cell.state_size])
+    else:
+        raise ValueError("Unknown cell state size declaration %s"
+                         % cell.state_size)
 

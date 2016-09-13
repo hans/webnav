@@ -4,11 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
 
-
-RLModel = namedtuple("RLModel",
-                     ["inputs", "scores",
-                      "rewards", "masks",
-                      "all_losses", "loss"])
+from webnav.util import make_cell_zero_state, make_cell_state_placeholder
 
 
 def score_beam(state, candidates):
@@ -22,30 +18,6 @@ def score_beam(state, candidates):
                         (-1, num_candidates))
 
     return scores
-
-
-def make_cell_state_placeholder(cell, name):
-    if isinstance(cell.state_size, int):
-        return tf.placeholder(tf.float32, shape=(None, cell.state_size),
-                              name=name)
-    elif isinstance(cell.state_size, tuple):
-        return tuple([tf.placeholder(tf.float32, shape=(None, size_i),
-                                     name="%s/cell_%i" % (name, i))
-                      for i, size_i in enumerate(cell.state_size)])
-    else:
-        raise ValueError("Unknown cell state size declaration %s"
-                         % cell.state_size)
-
-
-def make_cell_zero_state(cell, batch_size):
-    if isinstance(cell.state_size, int):
-        return np.zeros((batch_size, cell.state_size), dtype=np.float32)
-    elif isinstance(cell.state_size, tuple):
-        return tuple([np.zeros((batch_size, state_i))
-                      for state_i in cell.state_size])
-    else:
-        raise ValueError("Unknown cell state size declaration %s"
-                         % cell.state_size)
 
 
 def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
@@ -227,7 +199,8 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
         outputs = (scores,)
         return rnn_inputs, outputs
 
-def q_model(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
+
+def q_learn(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
             name="model"):
     # Per-timestep non-discounted rewards
     rewards = [tf.placeholder(tf.float32, (None,), name="rewards_%i" % t)
@@ -270,9 +243,9 @@ def q_model(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
 
     tf.scalar_summary("loss", loss)
 
-    return RLModel(inputs, scores,
-                   rewards, masks,
-                   losses, loss)
+    inputs = (rewards, masks)
+    outputs = (losses, loss)
+    return inputs, outputs
 
 
 class QCommModel(object):
@@ -295,10 +268,10 @@ class QCommModel(object):
 
         all_inputs = self.current_node + self.candidates + \
                 self.message_sent + self.message_recv + [self.query]
-        q_tuple = q_model(all_inputs, self.scores, path_length, gamma)
-
-        self.rewards, self.masks, self.all_losses, self.loss = \
-                q_tuple[-4:]
+        q_inputs, q_outputs = q_learn(all_inputs, self.scores,
+                                      path_length, gamma)
+        self.rewards, self.masks = q_inputs
+        self.all_losses, self.loss = q_outputs
 
         self.sm = None
 
