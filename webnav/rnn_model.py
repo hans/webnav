@@ -1,6 +1,7 @@
 from collections import namedtuple
-import tensorflow as tf
 
+import numpy as np
+import tensorflow as tf
 from tensorflow.contrib.layers import layers
 
 
@@ -272,3 +273,106 @@ def q_model(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
     return RLModel(inputs, scores,
                    rewards, masks,
                    losses, loss)
+
+
+class QCommModel(object):
+
+    def __init__(self, beam_size, environment, path_length,
+                 embedding_dim, gamma=0.99):
+        self.beam_size = beam_size
+        self.path_length = path_length
+        self.embedding_dim = embedding_dim
+
+        self.env = environment
+        agent = self.env.b_agent
+
+        rnn_inputs, rnn_outputs = rnn_comm_model(beam_size, agent, path_length,
+                                                 embedding_dim)
+
+        self.current_node, self.query, self.candidates, \
+                self.message_sent, self.message_recv = rnn_inputs
+        self.scores, = rnn_outputs
+
+        all_inputs = self.current_node + self.candidates + \
+                self.message_sent + self.message_recv + [self.query]
+        q_tuple = q_model(all_inputs, self.scores, path_length, gamma)
+
+        self.rewards, self.masks, self.all_losses, self.loss = \
+                q_tuple[-4:]
+
+        self.sm = None
+
+    @property
+    def all_feeds(self):
+        return self.current_node + self.candidates + self.message_sent + \
+                self.message_recv + [self.query] + self.rewards + self.masks
+
+    @property
+    def all_fetches(self):
+        return self.scores + self.all_losses + [self.loss]
+
+    @classmethod
+    def build(cls, args, env):
+        """
+        Build a communicative Q-learning model.
+
+        Args:
+            args: CLI args
+            env: Representative instance of communication environment
+        """
+        webnav_env = env._env
+        return cls(args.beam_size, env, args.path_length,
+                   webnav_env.embedding_dim, args.gamma)
+
+    def _reset_batch(self, batch_size):
+        """
+        Allocate reusable
+        """
+        if hasattr(self, "_d_query") and len(self._d_query) == batch_size:
+            self._d_message_sent.fill(0.0)
+            return
+
+        self._d_query = np.empty((batch_size, self.embedding_dim))
+        self._d_current_nodes = np.empty((batch_size, self.embedding_dim))
+        self._d_candidates = np.empty((batch_size, self.beam_size,
+                                       self.embedding_dim))
+
+        self._d_message_sent = np.zeros((batch_size, self.env.vocab_size))
+        self._d_message_recv = np.empty((batch_size, self.env.vocab_size))
+
+    def __call__(self, t, observations, masks):
+        """
+        Compute Q(s, *) for a batch of states.
+
+        Args:
+            t: timestep integer
+            observations: List of env observations
+            masks: Training cost masks for the current timestep
+        """
+        batch_size = len(observations)
+        if t == 0:
+            self._reset_batch(batch_size)
+
+        for i, obs_i in enumerate(observations):
+            # TODO integrate message_sent / message_recv
+            nav_obs, message = obs_i
+            query_i, current_node_i, beam_i = nav_obs
+
+            self._d_query[i] = query_i
+            self._d_current_nodes[i] = current_node_i
+            self._d_candidates[i] = beam_i
+            self._d_message_recv[i] = message
+
+        feed = {
+            self.current_node[t]: self._d_current_nodes,
+            self.candidates[t]: self._d_candidates,
+            self.message_sent[t]: self._d_message_sent,
+            self.message_recv[t]: self._d_message_recv,
+            self.masks[t]: masks,
+        }
+        if t == 0:
+            feed[self.query] = self._d_query
+
+        # Calculate action scores.
+        scores_t = self.sm.run(self.scores[t], feed)
+        return scores_t
