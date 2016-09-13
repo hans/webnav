@@ -25,12 +25,6 @@ from webnav.session import PartialRunSessionManager
 from webnav.util import rollout
 
 
-QCommModel = namedtuple("QCommModel", ["current_node", "query", "candidates",
-                                       "message_sent", "message_recv",
-                                       "scores", "rewards", "masks",
-                                       "all_losses", "loss"])
-
-
 class QCommModel(object):
 
     def __init__(self, beam_size, environment, path_length,
@@ -55,6 +49,8 @@ class QCommModel(object):
 
         self.rewards, self.masks, self.all_losses, self.loss = \
                 q_tuple[-4:]
+
+        self.sm = None
 
     @property
     def all_feeds(self):
@@ -94,14 +90,11 @@ class QCommModel(object):
         self._d_message_sent = np.zeros((batch_size, self.env.vocab_size))
         self._d_message_recv = np.empty((batch_size, self.env.vocab_size))
 
-    def __call__(self, sm, t, observations, masks):
+    def __call__(self, t, observations, masks):
         """
         Compute Q(s, *) for a batch of states.
 
         Args:
-            model: QCommModel instance
-            sm: PartialRunSessionManager
-            env: Representative situated conversation environment
             t: timestep integer
             observations: List of env observations
             masks: Training cost masks for the current timestep
@@ -131,7 +124,7 @@ class QCommModel(object):
             feed[self.query] = self._d_query
 
         # Calculate action scores.
-        scores_t = sm.run(self.scores[t], feed)
+        scores_t = self.sm.run(self.scores[t], feed)
         return scores_t
 
 
@@ -158,7 +151,6 @@ def eval(model, envs, sv, sm, log_f, args):
 
     assert not envs[0]._env.is_training
     graph = envs[0]._env._graph
-    q_fn = partial(model, sm)
 
     trajectories, targets = [], []
     losses = []
@@ -176,7 +168,7 @@ def eval(model, envs, sv, sm, log_f, args):
         sample_navigator = sample_env._env._navigator
         sample_done = False
 
-        for iter_info in rollout(q_fn, envs, args, epsilon=0):
+        for iter_info in rollout(model, envs, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t = iter_info
 
             # Set up to track a trajectory of a single batch element.
@@ -269,8 +261,8 @@ def train(args):
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
-    # Prepare simple executable Q-function
-    q_fn = partial(model, sm)
+    # Prepare model for execution
+    model.sm = sm
 
     # Open a file for detailed progress logging.
     import sys
@@ -295,7 +287,7 @@ def train(args):
                     log_f.flush()
 
                 rewards = []
-                for iter_info in rollout(q_fn, envs, args):
+                for iter_info in rollout(model, envs, args):
                     t, _, _, _, _, rewards_t = iter_info
                     rewards.append(rewards_t)
 
