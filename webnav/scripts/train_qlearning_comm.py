@@ -22,6 +22,7 @@ from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversation
 from webnav.environments.conversation import UTTER, WRAPPED, SEND, RECEIVE
 from webnav.rnn_model import rnn_comm_model, q_model
 from webnav.session import PartialRunSessionManager
+from webnav.util import rollout
 
 
 QCommModel = namedtuple("QCommModel", ["current_node", "query", "candidates",
@@ -50,47 +51,6 @@ def build_model(args, env):
     model = QCommModel(current_node, query, candidates, message_sent, message_recv,
                        *(q_tuple[1:]))
     return model
-
-
-def rollout(q_fn, envs, sm, args, epsilon=0.1):
-    observations = [env.reset() for env in envs]
-    batch_size = len(envs)
-
-    masks_t = [1.0] * batch_size
-
-    for t in range(args.path_length):
-        scores_t = q_fn(t, observations, masks_t)
-        # print scores_t
-
-        # Epsilon-greedy sampling
-        actions = scores_t.argmax(axis=1)
-        if epsilon > 0:
-            actions_rand = np.random.randint(env.action_space.n,
-                                             size=batch_size)
-            mask = np.random.random(size=batch_size) < epsilon
-            actions = np.choose(mask, (actions_rand, actions))
-
-        # TODO integrate in environment
-        # # Track if we sent a message.
-        # message_sent.fill(0)
-        # for i, action in enumerate(actions):
-        #     action_type, data = env.describe_action(action)
-        #     if action_type == SEND:
-        #         for token in data:
-        #             message_sent[i, token] = 1.0
-
-        # Take the step and collect new observation data
-        next_steps = [env.step(action)
-                      for env, action in zip(envs, actions)]
-        obs_next, rewards_t, dones_t, _ = map(list, zip(*next_steps))
-
-        yield t, observations, scores_t, actions, rewards_t, dones_t
-
-        observations = [next_step.observation for next_step in next_steps]
-        dones = [next_step.done for next_step in next_steps]
-        masks_t = 1.0 - np.asarray(dones).astype(np.float32)
-
-            # sys.exit(1)
 
 
 def model_q_fn(model, sm, env, t, observations, masks):
@@ -123,6 +83,7 @@ def model_q_fn(model, sm, env, t, observations, masks):
         model_q_fn.message_recv = np.empty((batch_size, env.vocab_size))
 
     for i, obs_i in enumerate(observations):
+        # TODO integrate message_sent / message_recv
         nav_obs, message = obs_i
         query_i, current_node_i, beam_i = nav_obs
 
@@ -188,7 +149,7 @@ def eval(model, envs, sv, sm, log_f, args):
         sample_navigator = sample_env._env._navigator
         sample_done = False
 
-        for iter_info in rollout(q_fn, envs, sm, args, epsilon=0):
+        for iter_info in rollout(q_fn, envs, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t = iter_info
 
             # Set up to track a trajectory of a single batch element.
@@ -310,7 +271,7 @@ def train(args):
                     log_f.flush()
 
                 rewards = []
-                for iter_info in rollout(q_fn, envs, sm, args):
+                for iter_info in rollout(q_fn, envs, args):
                     t, _, _, _, _, rewards_t = iter_info
                     rewards.append(rewards_t)
 

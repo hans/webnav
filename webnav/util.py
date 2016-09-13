@@ -87,3 +87,35 @@ def log_trajectory(trajectory, target, env, log_f):
         if stop:
             break
 
+
+def rollout(q_fn, envs, args, epsilon=0.1):
+    """
+    Execute a batch of rollouts with the given Q function, on- or off-policy.
+    """
+    observations = [env.reset() for env in envs]
+    batch_size = len(envs)
+
+    masks_t = [1.0] * batch_size
+
+    for t in range(args.path_length):
+        scores_t = q_fn(t, observations, masks_t)
+
+        # Epsilon-greedy sampling
+        actions = scores_t.argmax(axis=1)
+        if epsilon > 0:
+            actions_rand = np.random.randint(env.action_space.n,
+                                             size=batch_size)
+            mask = np.random.random(size=batch_size) < epsilon
+            actions = np.choose(mask, (actions_rand, actions))
+
+        # Take the step and collect new observation data
+        next_steps = [env.step(action)
+                      for env, action in zip(envs, actions)]
+        obs_next, rewards_t, dones_t, _ = map(list, zip(*next_steps))
+
+        yield t, observations, scores_t, actions, rewards_t, dones_t
+
+        observations = [next_step.observation for next_step in next_steps]
+        dones = [next_step.done for next_step in next_steps]
+        masks_t = 1.0 - np.asarray(dones).astype(np.float32)
+
