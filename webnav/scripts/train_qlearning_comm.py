@@ -31,81 +31,108 @@ QCommModel = namedtuple("QCommModel", ["current_node", "query", "candidates",
                                        "all_losses", "loss"])
 
 
-def build_model(args, env):
-    """
-    Build a communicative Q-learning model.
+class QCommModel(object):
 
-    Args:
-        args: CLI args
-        env: Representative instance of communication environment
-    """
-    webnav_env = env._env
-    rnn_inputs, rnn_outputs = rnn_comm_model(args.beam_size, env.b_agent,
-                                             args.path_length,
-                                             webnav_env.embedding_dim)
-    current_node, query, candidates, message_sent, message_recv = rnn_inputs
-    all_inputs = current_node + candidates + message_sent + message_recv + [query]
-    scores = rnn_outputs[0]
+    def __init__(self, beam_size, environment, path_length,
+                 embedding_dim, gamma=0.99):
+        self.beam_size = beam_size
+        self.path_length = path_length
+        self.embedding_dim = embedding_dim
 
-    q_tuple = q_model(all_inputs, scores, args.path_length, args.gamma)
-    model = QCommModel(current_node, query, candidates, message_sent, message_recv,
-                       *(q_tuple[1:]))
-    return model
+        self.env = environment
+        agent = self.env.b_agent
 
+        rnn_inputs, rnn_outputs = rnn_comm_model(beam_size, agent, path_length,
+                                                 embedding_dim)
 
-def model_q_fn(model, sm, env, t, observations, masks):
-    """
-    Compute Q(s, *) for a batch of states.
+        self.current_node, self.query, self.candidates, \
+                self.message_sent, self.message_recv = rnn_inputs
+        self.scores, = rnn_outputs
 
-    Args:
-        model: QCommModel instance
-        sm: PartialRunSessionManager
-        env: Representative situated conversation environment
-        t: timestep integer
-        observations: List of env observations
-        masks: Training cost masks for the current timestep
-    """
-    # TODO make into a class, this is silly
-    batch_size = len(observations)
-    # Tag some helper ndarrays onto the function that we can reuse
-    if not hasattr(model_q_fn, "query") or len(model_q_fn.query) != batch_size:
-        if t > 0:
-            raise RuntimeError("batch size changed during rollout "
-                               "or unexpected internal error")
+        all_inputs = self.current_node + self.candidates + \
+                self.message_sent + self.message_recv + [self.query]
+        q_tuple = q_model(all_inputs, self.scores, path_length, gamma)
 
-        embedding_dim = observations[0][0][0].size
-        beam_size = observations[0][0][2].shape[0]
-        model_q_fn.query = np.empty((batch_size, embedding_dim))
-        model_q_fn.current_nodes = np.empty((batch_size, embedding_dim))
-        model_q_fn.beams = np.empty((batch_size, beam_size, embedding_dim))
+        self.rewards, self.masks, self.all_losses, self.loss = \
+                q_tuple[-4:]
 
-        model_q_fn.message_sent = np.zeros((batch_size, env.vocab_size))
-        model_q_fn.message_recv = np.empty((batch_size, env.vocab_size))
+    @property
+    def all_feeds(self):
+        return self.current_node + self.candidates + self.message_sent + \
+                self.message_recv + [self.query] + self.rewards + self.masks
 
-    for i, obs_i in enumerate(observations):
-        # TODO integrate message_sent / message_recv
-        nav_obs, message = obs_i
-        query_i, current_node_i, beam_i = nav_obs
+    @property
+    def all_fetches(self):
+        return self.scores + self.all_losses + [self.loss]
 
-        model_q_fn.query[i] = query_i
-        model_q_fn.current_nodes[i] = current_node_i
-        model_q_fn.beams[i] = beam_i
-        model_q_fn.message_recv[i] = message
+    @classmethod
+    def build(cls, args, env):
+        """
+        Build a communicative Q-learning model.
 
-    feed = {
-        model.current_node[t]: model_q_fn.current_nodes,
-        model.candidates[t]: model_q_fn.beams,
-        model.masks[t]: masks,
-        model.message_sent[t]: model_q_fn.message_sent,
-        model.message_recv[t]: model_q_fn.message_recv,
-    }
-    if t == 0:
-        feed[model.query] = model_q_fn.query
+        Args:
+            args: CLI args
+            env: Representative instance of communication environment
+        """
+        webnav_env = env._env
+        return cls(args.beam_size, env, args.path_length,
+                   webnav_env.embedding_dim, args.gamma)
 
-    # Calculate action scores.
-    scores_t = sm.run(model.scores[t], feed)
+    def _reset_batch(self, batch_size):
+        """
+        Allocate reusable
+        """
+        if hasattr(self, "_d_query") and len(self._d_query) == batch_size:
+            self._d_message_sent.fill(0.0)
+            return
 
-    return scores_t
+        self._d_query = np.empty((batch_size, self.embedding_dim))
+        self._d_current_nodes = np.empty((batch_size, self.embedding_dim))
+        self._d_candidates = np.empty((batch_size, self.beam_size,
+                                       self.embedding_dim))
+
+        self._d_message_sent = np.zeros((batch_size, self.env.vocab_size))
+        self._d_message_recv = np.empty((batch_size, self.env.vocab_size))
+
+    def __call__(self, sm, t, observations, masks):
+        """
+        Compute Q(s, *) for a batch of states.
+
+        Args:
+            model: QCommModel instance
+            sm: PartialRunSessionManager
+            env: Representative situated conversation environment
+            t: timestep integer
+            observations: List of env observations
+            masks: Training cost masks for the current timestep
+        """
+        batch_size = len(observations)
+        if t == 0:
+            self._reset_batch(batch_size)
+
+        for i, obs_i in enumerate(observations):
+            # TODO integrate message_sent / message_recv
+            nav_obs, message = obs_i
+            query_i, current_node_i, beam_i = nav_obs
+
+            self._d_query[i] = query_i
+            self._d_current_nodes[i] = current_node_i
+            self._d_candidates[i] = beam_i
+            self._d_message_recv[i] = message
+
+        feed = {
+            self.current_node[t]: self._d_current_nodes,
+            self.candidates[t]: self._d_candidates,
+            self.message_sent[t]: self._d_message_sent,
+            self.message_recv[t]: self._d_message_recv,
+            self.masks[t]: masks,
+        }
+        if t == 0:
+            feed[self.query] = self._d_query
+
+        # Calculate action scores.
+        scores_t = sm.run(self.scores[t], feed)
+        return scores_t
 
 
 def gold_rollout(model, envs, sm, args):
@@ -131,7 +158,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
     assert not envs[0]._env.is_training
     graph = envs[0]._env._graph
-    q_fn = partial(model_q_fn, model, sm, envs[0])
+    q_fn = partial(model, sm)
 
     trajectories, targets = [], []
     losses = []
@@ -221,7 +248,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
 def train(args):
     graph, envs, eval_envs = util.build_webnav_conversation_envs(args)
-    model = build_model(args, envs[0])
+    model = QCommModel.build(args, envs[0])
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)
@@ -237,16 +264,13 @@ def train(args):
 
     # Build a Supervisor session that supports partial runs.
     sm = PartialRunSessionManager(
-            partial_fetches=model.scores + model.all_losses + \
-                    [train_op, summary_op, model.loss],
-            partial_feeds=model.current_node + model.candidates + \
-                    [model.query] + model.message_sent + model.message_recv + \
-                    model.rewards + model.masks)
+            partial_fetches=model.all_fetches + [train_op, summary_op],
+            partial_feeds=model.all_feeds)
     sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
                              session_manager=sm, summary_op=None)
 
-    # Prepare executable Q-function.
-    q_fn = partial(model_q_fn, model, sm, envs[0])
+    # Prepare simple executable Q-function
+    q_fn = partial(model, sm)
 
     # Open a file for detailed progress logging.
     import sys
