@@ -4,6 +4,7 @@ Defines a common web graph navigation interface to WikiNav, Wikispeedia, etc.
 
 from collections import namedtuple
 import random
+import sys
 
 import numpy as np
 from rllab.misc.overrides import overrides
@@ -145,7 +146,7 @@ class EmbeddedWikiNavGraph(EmbeddedWebGraph):
 
 class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
 
-    def __init__(self, data_path, emb_path, path_length):
+    def __init__(self, data_path, path_length, emb_path=None):
         try:
             import cPickle as pickle
         except: import pickle
@@ -154,8 +155,19 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
             data = pickle.load(data_f)
         self._data = data
 
-        self.embeddings = embeddings = np.load(emb_path)["arr_0"]
-        self.embedding_dim = embeddings.shape[1]
+        if emb_path is not None:
+            self.embeddings = embeddings = np.load(emb_path)["arr_0"]
+            self.embedding_dim = embeddings.shape[1]
+        else:
+            print >> sys.stderr, \
+                    ("=====================================================\n"
+                     "WARNING: Using randomly generated article embeddings.\n"
+                     "=====================================================")
+            # Random embeddings.
+            self.embedding_dim = 128 # fixed for now
+            shape = (len(data["articles"]), self.embedding_dim)
+            embeddings = np.random.random(shape) * 2.0 - 1.0
+            self.embeddings = embeddings
 
         articles = [EmbeddedArticle(
                         article["name"], embeddings[i],

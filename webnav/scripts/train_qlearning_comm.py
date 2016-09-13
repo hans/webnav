@@ -299,7 +299,7 @@ if __name__ == "__main__":
                    default="wikinav")
     p.add_argument("--wiki_path", required=True)
     p.add_argument("--qp_path")
-    p.add_argument("--emb_path", required=True)
+    p.add_argument("--emb_path")
 
     args = p.parse_args()
     pprint.pprint(vars(args))

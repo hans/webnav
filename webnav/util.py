@@ -32,12 +32,14 @@ def build_webnav_conversation_envs(args):
     if args.data_type == "wikinav":
         if not args.qp_path:
             raise ValueError("--qp_path required for wikinav data")
+        if not args.emb_path:
+            raise ValueError("--emb_path required for wikinav data")
         graph = web_graph.EmbeddedWikiNavGraph(args.wiki_path, args.qp_path,
                                                args.emb_path, args.path_length)
     elif args.data_type == "wikispeedia":
         graph = web_graph.EmbeddedWikispeediaGraph(args.wiki_path,
-                                                   args.emb_path,
-                                                   args.path_length)
+                                                   args.path_length,
+                                                   emb_path=args.emb_path)
     else:
         raise ValueError("Invalid data_type %s" % args.data_type)
 
