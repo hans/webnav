@@ -193,11 +193,11 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
             # Use top hidden layer to calculate scores.
             last_out = inp
             if cells[-1].output_size != embedding_dim:
-                last_out = layers.fully_connected(last_out,
+                scoring_state = layers.fully_connected(last_out,
                         embedding_dim, activation_fn=tf.tanh,
                         scope="state_projection")
 
-            scores_t = score_beam(last_out, candidates[t])
+            scores_t = score_beam(scoring_state, candidates[t])
 
             # HACK: add position-aware delta based on message
             scores_t += layers.fully_connected(messages_proj[t],
