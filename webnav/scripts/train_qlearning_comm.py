@@ -15,13 +15,13 @@ import tensorflow as tf
 from tensorflow.contrib.layers import layers
 from tqdm import tqdm, trange
 
+from webnav import util
 from webnav import web_graph
 from webnav.agents.oracle import WebNavMaxOverlapAgent
 from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversationEnvironment
 from webnav.environments.conversation import UTTER, WRAPPED, SEND, RECEIVE
 from webnav.rnn_model import rnn_comm_model, q_model
 from webnav.session import PartialRunSessionManager
-from webnav.util import discount_cumsum, transpose_list
 
 
 QCommModel = namedtuple("QCommModel", ["current_node", "query", "candidates",
@@ -50,37 +50,6 @@ def build_model(args, env):
     model = QCommModel(current_node, query, candidates, message,
                        *(q_tuple[1:]))
     return model
-
-
-def build_envs(args):
-    if args.data_type == "wikinav":
-        if not args.qp_path:
-            raise ValueError("--qp_path required for wikinav data")
-        graph = web_graph.EmbeddedWikiNavGraph(args.wiki_path, args.qp_path,
-                                               args.emb_path, args.path_length)
-    elif args.data_type == "wikispeedia":
-        graph = web_graph.EmbeddedWikispeediaGraph(args.wiki_path,
-                                                   args.emb_path,
-                                                   args.path_length)
-    else:
-        raise ValueError("Invalid data_type %s" % args.data_type)
-
-    webnav_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
-                                              is_training=True, oracle=False)
-                   for _ in range(args.batch_size)]
-    webnav_eval_envs = [EmbeddingWebNavEnvironment(args.beam_size, graph,
-                                                   is_training=False,
-                                                   oracle=False)
-                   for _ in range(args.batch_size)]
-
-    # Wrap core environment in conversation environment.
-    # TODO maybe don't need to replicate agents?
-    envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
-            for env in webnav_envs]
-    eval_envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
-                 for env in webnav_eval_envs]
-
-    return graph, envs, eval_envs
 
 
 def rollout(model, envs, sm, args):
@@ -257,7 +226,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
 
 def train(args):
-    graph, envs, eval_envs = build_envs(args)
+    graph, envs, eval_envs = util.build_webnav_conversation_envs(args)
     model = build_model(args, envs[0])
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
