@@ -178,7 +178,7 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
                     for cell in cells]
         scores = []
 
-        def step(hid_prev_t, input_t):
+        def step(t, hid_prev_t, input_t):
             """
             Build a single vertical-unrolled step in the RNN graph.
             """
@@ -198,6 +198,12 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
                         scope="state_projection")
 
             scores_t = score_beam(last_out, candidates[t])
+
+            # HACK: add position-aware delta based on message
+            scores_t += layers.fully_connected(messages_proj[t],
+                    beam_size, activation_fn=None,
+                    scope="position_aware_score_delta")
+
             comm_scores_t = comm_scores(scores_t, last_out, agent)
 
             scores_t = tf.concat(1, [scores_t, comm_scores_t])
@@ -207,7 +213,7 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
         for t in range(num_timesteps):
             if t > 0: tf.get_variable_scope().reuse_variables()
 
-            scores_t, hid_vals = step(hid_vals, inputs[t])
+            scores_t, hid_vals = step(t, hid_vals, inputs[t])
             scores.append(scores_t)
 
         outputs = (scores,)
