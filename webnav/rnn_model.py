@@ -5,7 +5,7 @@ from rllab.misc.overrides import overrides
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
 
-from webnav.agents.oracle import WebNavMaxOverlapAgent
+from webnav.agents.oracle import OracleAgent, WebNavMaxOverlapAgent
 from webnav.util import make_cell_zero_state, make_cell_state_placeholder
 
 
@@ -407,7 +407,7 @@ class OracleCommModel(CommModel):
     def __init__(self, *args, **kwargs):
         super(OracleCommModel, self).__init__(*args, **kwargs)
 
-        assert isinstance(self.agent, WebNavMaxOverlapAgent)
+        assert isinstance(self.agent, OracleAgent)
 
     def _reset_batch(self, batch_size):
         self._state = self.QUERY
@@ -434,8 +434,9 @@ class OracleCommModel(CommModel):
         elif self._state == self.RECEIVE:
             assert t % 3 == 2
             # Read the response from agent.
-            messages = [obs_i[1].nonzero()[0] for obs_i in observations]
-            action_idxs = messages
+            messages = [obs_i[1].nonzero()[0][0] for obs_i in observations]
+            action_idxs = np.asarray([int(self.agent.vocab[idx])
+                                      for idx in messages])
 
             scores = np.zeros((self._batch_size, self.env.action_space.n))
             scores[np.arange(self._batch_size), action_idxs] = 1.0

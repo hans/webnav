@@ -4,7 +4,7 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from webnav import web_graph
-from webnav.agents.oracle import WebNavMaxOverlapAgent
+from webnav.agents import oracle
 from webnav.environments import EmbeddingWebNavEnvironment
 from webnav.environments import SituatedConversationEnvironment
 from webnav.environments.conversation import SEND, RECEIVE, UTTER, WRAPPED
@@ -47,9 +47,9 @@ def build_webnav_conversation_envs(args):
 
     # Wrap core environment in conversation environment.
     # TODO maybe don't need to replicate agents?
-    envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
+    envs = [SituatedConversationEnvironment(env, oracle.WebNavEmbeddingAgent(env))
             for env in webnav_envs]
-    eval_envs = [SituatedConversationEnvironment(env, WebNavMaxOverlapAgent(env))
+    eval_envs = [SituatedConversationEnvironment(env, oracle.WebNavEmbeddingAgent(env))
                  for env in webnav_eval_envs]
 
     return graph, envs, eval_envs

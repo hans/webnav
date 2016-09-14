@@ -1,15 +1,13 @@
+import numpy as np
 from rllab.misc.overrides import overrides
 
 from webnav.agents import Agent
 
 
-class WebNavMaxOverlapAgent(Agent):
-
+class OracleAgent(Agent):
     """
-    An Agent which, when prompted, returns the index of the candidate next
-    article which has the highest n-gram overlap with the goal.
+    An agent which responds to queries with explicit action indices.
     """
-
     def __init__(self, env, match_reward=2.0):
         self.env = env
         self.beam_size = env.beam_size
@@ -43,6 +41,58 @@ class WebNavMaxOverlapAgent(Agent):
         assert env == self.env
 
         message_str = " ".join(self.vocab[idx] for idx in message)
+
+        response, reward = self.respond(env, message_str)
+        response = response.split(" ")
+        response = [self._token2idx[token] for token in response if token]
+        return response, reward
+
+    def respond(self, env, message_str):
+        raise NotImplementedError
+
+
+class WebNavEmbeddingAgent(OracleAgent):
+    """
+    An oracle agent which, when prompted, returns the index of the candidate
+    next article which has the highest embedding dot-product with the target
+    article's embedding.
+    """
+
+    @overrides
+    def respond(self, env, message_str):
+        response = ""
+        matched, reward = False, 0.0
+
+        if message_str.startswith("which"):
+            # TODO don't reward multiple consecutive matching queries
+            matched = True
+
+            graph = env._graph
+            beam = graph.get_article_embeddings(env._navigator._beam)
+            query = env._query_embedding
+
+            scores = np.dot(beam, query)
+            scores /= np.linalg.norm(beam, axis=1)
+            scores /= np.linalg.norm(query)
+            action = scores.argmax()
+
+            response = str(action)
+
+        if matched:
+            reward += self.match_reward
+
+        return response, reward
+
+
+class WebNavMaxOverlapAgent(OracleAgent):
+
+    """
+    An Agent which, when prompted, returns the index of the candidate next
+    article which has the highest n-gram overlap with the goal.
+    """
+
+    @overrides
+    def respond(self, env, message_str):
         response = ""
         matched, reward = False, 0.0
 
@@ -61,6 +111,4 @@ class WebNavMaxOverlapAgent(Agent):
         if matched:
             reward += self.match_reward
 
-        response = response.split(" ")
-        response = [self._token2idx[token] for token in response if token]
         return response, reward
