@@ -56,7 +56,7 @@ def eval(model, envs, sv, sm, log_f, args):
     total_returns = 0.0
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
-        rewards = []
+        rewards, masks = [], []
 
         # Draw a random batch element to track for this batch.
         sample_idx = np.random.choice(len(envs))
@@ -65,7 +65,8 @@ def eval(model, envs, sv, sm, log_f, args):
         sample_done = False
 
         for iter_info in rollout(model, envs, args, epsilon=0):
-            t, observations, _, actions_t, rewards_t, dones_t = iter_info
+            t, observations, _, actions_t, rewards_t, dones_t, masks_t = \
+                    iter_info
 
             # Set up to track a trajectory of a single batch element.
             if t == 0:
@@ -98,8 +99,9 @@ def eval(model, envs, sv, sm, log_f, args):
                                  reward))
 
             rewards.append(rewards_t)
+            masks.append(masks_t)
 
-        losses_i = np.asarray(model.get_losses(rewards))
+        losses_i = np.asarray(model.get_losses(rewards, masks))
 
         # Accumulate.
         per_timestep_losses += losses_i
@@ -187,17 +189,27 @@ def train(args):
                     tqdm.write("============================\n"
                                "Evaluating at batch %i, epoch %i"
                                % (i, e), log_f)
-                    eval(oracle_model, eval_envs, sv, sm, log_f, args)
+                    eval(model, eval_envs, sv, sm, log_f, args)
                     log_f.flush()
 
-                rewards = []
-                for iter_info in rollout(model, envs, args):
-                    t, _, _, _, _, rewards_t = iter_info
+                # Sample a model for rollouts.
+                is_oracle = np.random.random() < args.oracle_freq
+                epsilon = 0.0 if is_oracle else 0.1
+                active_q_fn = oracle_model if is_oracle else None
+
+                rewards, masks = [], []
+                rollout_info = rollout(model, envs, args,
+                                       epsilon=epsilon,
+                                       active_q_fn=active_q_fn)
+                for step in rollout_info:
+                    t, _, _, _, _, rewards_t, masks_t = step
                     rewards.append(rewards_t)
+                    masks.append(masks_t)
 
                 do_summary = i % args.summary_interval == 0
                 summary_fetch = summary_op if do_summary else train_op
 
+                # Do training update (NB: regardless of rollout model used).
                 fetches = [train_op, summary_fetch, model.loss]
                 feeds = {model.rewards[t]: rewards_t
                          for t, rewards_t in enumerate(rewards)}
@@ -228,6 +240,10 @@ if __name__ == "__main__":
 
     p.add_argument("--n_epochs", default=3, type=int)
     p.add_argument("--n_eval_iters", default=2, type=int)
+
+    p.add_argument("--oracle_freq", default=0.0, type=float,
+                   help=("Decimal frequency of oracle rollouts vs. all "
+                         "rollouts (oracle + learned model)"))
 
     p.add_argument("--logdir", default="/tmp/webnav_q_comm")
     p.add_argument("--eval_interval", default=100, type=int)

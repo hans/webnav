@@ -285,23 +285,24 @@ class Model(object):
         return cls(args.beam_size, env, args.path_length,
                    env.embedding_dim, args.gamma)
 
-    def step(self, t, observations, masks):
+    def step(self, t, observations, masks_t):
         """
         Compute Q(s, *) for a batch of states.
 
         Args:
             t: timestep integer
             observations: List of env observations
-            masks: Training cost masks for the current timestep
+            masks_t: Training cost masks for the current timestep
         """
         raise NotImplementedError
 
-    def get_losses(self, rewards):
+    def get_losses(self, rewards, masks):
         """
-        Compute Q-learning loss after a rollout given this reward sequence.
+        Compute Q-learning loss after a rollout has completed.
 
         Args:
             rewards: Sequence of `batch_size`-length per-timestep reward arrays
+            masks: Sequence of `batch_size` loss masks
 
         Returns:
             losses: Sequence of masked loss scalars
@@ -381,7 +382,7 @@ class QNavigatorModel(Model):
         scores_t = self.sm.run(self.scores[t], feed)
         return scores_t
 
-    def get_losses(self, rewards):
+    def get_losses(self, rewards, masks):
         fetches = self.all_losses
         feeds = {self.rewards[t]: rewards_t
                  for t, rewards_t in enumerate(rewards)}
@@ -490,7 +491,7 @@ class QCommModel(CommModel):
         scores_t = self.sm.run(self.scores[t], feed)
         return scores_t
 
-    def get_losses(self, rewards):
+    def get_losses(self, rewards, masks):
         fetches = self.all_losses
         feeds = {self.rewards[t]: rewards_t
                  for t, rewards_t in enumerate(rewards)}
@@ -513,6 +514,7 @@ class OracleCommModel(CommModel):
         super(OracleCommModel, self).__init__(*args, **kwargs)
 
         assert isinstance(self.agent, OracleAgent)
+        self.sm = None
 
     def _reset_batch(self, batch_size):
         self._state = self.QUERY
@@ -557,5 +559,5 @@ class OracleCommModel(CommModel):
             self._state = self.SEND
             return self._query_which
 
-    def get_losses(self, rewards):
+    def get_losses(self, rewards, masks):
         return 0.0

@@ -93,9 +93,21 @@ def log_trajectory(trajectory, target, env, log_f):
             break
 
 
-def rollout(q_fn, envs, args, epsilon=0.1):
+def rollout(q_fn, envs, args, epsilon=0.1, active_q_fn=None):
     """
     Execute a batch of rollouts with the given Q function, on- or off-policy.
+
+    Args:
+        q_fn: Q-function Q(s,a) which predicts scores for next action in given
+            state. Used to execute rollouts unless `active_q_fn` is given
+        envs:
+        args:
+        epsilon: For eps-greedy action sampling
+        active_q_fn: Optional secondary Q-function which both observes states
+            and predicts actions to follow. Useful when we want to perform
+            off-policy rollouts but also train the model Q-function. (In this
+            case our off-policy model is `active_q_fn` and the model would be
+            `q_fn`.)
     """
     observations = [env.reset() for env in envs]
     batch_size = len(envs)
@@ -118,7 +130,7 @@ def rollout(q_fn, envs, args, epsilon=0.1):
                       for env, action in zip(envs, actions)]
         obs_next, rewards_t, dones_t, _ = map(list, zip(*next_steps))
 
-        yield t, observations, scores_t, actions, rewards_t, dones_t
+        yield t, observations, scores_t, actions, rewards_t, dones_t, masks_t
 
         observations = [next_step.observation for next_step in next_steps]
         dones = [next_step.done for next_step in next_steps]
