@@ -1,3 +1,8 @@
+"""
+Shared model graph definitions and concrete model class definitions.
+In that order.
+"""
+
 from collections import namedtuple
 
 import numpy as np
@@ -250,7 +255,7 @@ def q_learn(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
     return inputs, outputs
 
 
-class CommModel(object):
+class Model(object):
     def __init__(self, beam_size, environment, path_length, embedding_dim,
                  gamma=0.99):
         self.beam_size = beam_size
@@ -259,7 +264,6 @@ class CommModel(object):
         self.gamma = gamma
 
         self.env = environment
-        self.agent = self.env.b_agent
 
     @property
     def all_feeds(self):
@@ -272,15 +276,14 @@ class CommModel(object):
     @classmethod
     def build(cls, args, env):
         """
-        Build a communicative Q-learning model.
+        Build a navigation model instance.
 
         Args:
             args: CLI args
-            env: Representative instance of communication environment
+            env: Representative environment instance
         """
-        webnav_env = env._env
         return cls(args.beam_size, env, args.path_length,
-                   webnav_env.embedding_dim, args.gamma)
+                   env.embedding_dim, args.gamma)
 
     def step(self, t, observations, masks):
         """
@@ -293,7 +296,7 @@ class CommModel(object):
         """
         raise NotImplementedError
 
-    def loss(self, rewards):
+    def get_losses(self, rewards):
         """
         Compute Q-learning loss after a rollout given this reward sequence.
 
@@ -304,6 +307,108 @@ class CommModel(object):
             losses: Sequence of masked loss scalars
         """
         raise NotImplementedError
+
+
+class QNavigatorModel(Model):
+
+    """
+    A Q-learning web navigator (no communication).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super(QNavigatorModel, self).__init__(*args, **kwargs)
+
+        rnn_inputs, rnn_outputs = rnn_model(self.beam_size,
+                                            self.path_length,
+                                            self.embedding_dim)
+
+        self.current_node, self.query, self.candidates = rnn_inputs
+        self.scores, = rnn_outputs
+
+        all_inputs = self.current_node + self.candidates + [self.query]
+        q_inputs, q_outputs = q_learn(all_inputs, self.scores,
+                                      self.path_length, self.gamma)
+        self.rewards, self.masks = q_inputs
+        self.all_losses, self.loss = q_outputs
+
+        self.sm = None
+
+    @property
+    @overrides
+    def all_feeds(self):
+        return self.current_node + self.candidates + [self.query] + \
+                self.rewards + self.masks
+
+    @property
+    @overrides
+    def all_fetches(self):
+        return self.scores + self.all_losses + [self.loss]
+
+    def _reset_batch(self, batch_size):
+        """
+        Allocate reusable
+        """
+        if hasattr(self, "_d_query") and len(self._d_query) == batch_size:
+            return
+
+        self._d_query = np.empty((batch_size, self.embedding_dim))
+        self._d_current_nodes = np.empty((batch_size, self.embedding_dim))
+        self._d_candidates = np.empty((batch_size, self.beam_size,
+                                       self.embedding_dim))
+
+    @overrides
+    def step(self, t, observations, masks):
+        batch_size = len(observations)
+        if t == 0:
+            self._reset_batch(batch_size)
+
+        for i, obs_i in enumerate(observations):
+            query_i, current_node_i, beam_i = obs_i
+
+            self._d_query[i] = query_i
+            self._d_current_nodes[i] = current_node_i
+            self._d_candidates[i] = beam_i
+
+        feed = {
+            self.current_node[t]: self._d_current_nodes,
+            self.candidates[t]: self._d_candidates,
+            self.masks[t]: masks,
+        }
+        if t == 0:
+            feed[self.query] = self._d_query
+
+        # Calculate action scores.
+        scores_t = self.sm.run(self.scores[t], feed)
+        return scores_t
+
+    def get_losses(self, rewards):
+        fetches = self.all_losses
+        feeds = {self.rewards[t]: rewards_t
+                 for t, rewards_t in enumerate(rewards)}
+        losses = self.sm.run(fetches, feeds)
+        return losses
+
+
+class CommModel(Model):
+
+    def __init__(self, *args, **kwargs):
+        super(CommModel, self).__init__(*args, **kwargs)
+
+        self.agent = self.env.b_agent
+
+    @classmethod
+    @overrides
+    def build(cls, args, env):
+        """
+        Build a communicative Q-learning model.
+
+        Args:
+            args: CLI args
+            env: Representative instance of communication environment
+        """
+        webnav_env = env._env
+        return cls(args.beam_size, env, args.path_length,
+                   webnav_env.embedding_dim, args.gamma)
 
 
 class QCommModel(CommModel):
@@ -385,11 +490,11 @@ class QCommModel(CommModel):
         scores_t = self.sm.run(self.scores[t], feed)
         return scores_t
 
-    def loss(self, rewards):
-        fetches = model.all_losses
-        feeds = {model.rewards[t]: rewards_t
+    def get_losses(self, rewards):
+        fetches = self.all_losses
+        feeds = {self.rewards[t]: rewards_t
                  for t, rewards_t in enumerate(rewards)}
-        losses = sm.run(fetches, feeds)
+        losses = self.sm.run(fetches, feeds)
         return losses
 
 
@@ -452,5 +557,5 @@ class OracleCommModel(CommModel):
             self._state = self.SEND
             return self._query_which
 
-    def loss(self, rewards):
+    def get_losses(self, rewards):
         return 0.0

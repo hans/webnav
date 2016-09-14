@@ -12,15 +12,13 @@ import random
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.layers import layers
 from tqdm import tqdm, trange
 
+from webnav import rnn_model
 from webnav import util
 from webnav import web_graph
-from webnav.agents.oracle import WebNavMaxOverlapAgent
-from webnav.environments import EmbeddingWebNavEnvironment, SituatedConversationEnvironment
 from webnav.environments.conversation import UTTER, WRAPPED, SEND, RECEIVE
-from webnav.rnn_model import QCommModel, OracleCommModel
+from webnav.environments.webnav_env import WebNavEnvironment
 from webnav.session import PartialRunSessionManager
 from webnav.util import rollout
 
@@ -39,8 +37,16 @@ def eval(model, envs, sv, sm, log_f, args):
         args:
     """
 
-    assert not envs[0]._env.is_training
-    graph = envs[0]._env._graph
+    def get_webnav_env(idx):
+        env = envs[idx]
+        if not isinstance(env, WebNavEnvironment):
+            env = env._env
+        return env
+
+    # Get a representative webnav env
+    env = get_webnav_env(0)
+    assert not env.is_training
+    graph = env._graph
 
     trajectories, targets = [], []
     losses = []
@@ -55,7 +61,7 @@ def eval(model, envs, sv, sm, log_f, args):
         # Draw a random batch element to track for this batch.
         sample_idx = np.random.choice(len(envs))
         sample_env = envs[sample_idx]
-        sample_navigator = sample_env._env._navigator
+        sample_navigator = get_webnav_env(sample_idx)._navigator
         sample_done = False
 
         for iter_info in rollout(model, envs, args, epsilon=0):
@@ -69,25 +75,31 @@ def eval(model, envs, sv, sm, log_f, args):
             # Track our single batch element.
             if not sample_done:
                 sample_done = dones_t[sample_idx]
-
                 action = actions_t[sample_idx]
-                action_type, data = sample_env.describe_action(action)
                 reward = rewards_t[sample_idx]
-                if action_type == WRAPPED:
-                    traj.append((WRAPPED,
-                                (data, sample_env._env.cur_article_id),
-                                 reward))
-                elif action_type == SEND:
-                    traj.append((action_type, data, reward))
 
-                    recv_event = sample_env._events[-1]
-                    traj.append((RECEIVE, recv_event[-1], 0.0))
+                if args.task_type == "communication":
+                    action_type, data = sample_env.describe_action(action)
+                    if action_type == WRAPPED:
+                        traj.append((WRAPPED,
+                                    (data, sample_env._env.cur_article_id),
+                                    reward))
+                    elif action_type == SEND:
+                        traj.append((action_type, data, reward))
+
+                        recv_event = sample_env._events[-1]
+                        traj.append((RECEIVE, recv_event[-1], 0.0))
+                    else:
+                        traj.append((action_type, data, reward))
                 else:
-                    traj.append((action_type, data, reward))
+                    traj.append((WRAPPED,
+                                 (action,
+                                  get_webnav_env(sample_idx).cur_article_id),
+                                 reward))
 
             rewards.append(rewards_t)
 
-        losses_i = np.asarray(model.loss(rewards))
+        losses_i = np.asarray(model.get_losses(rewards))
 
         # Accumulate.
         per_timestep_losses += losses_i
@@ -125,10 +137,14 @@ def eval(model, envs, sv, sm, log_f, args):
 
 
 def train(args):
-    graph, envs, eval_envs = util.build_webnav_conversation_envs(args)
-    model = QCommModel.build(args, envs[0])
-
-    oracle_model = OracleCommModel.build(args, eval_envs[0])
+    if args.task_type == "communication":
+        graph, envs, eval_envs = util.build_webnav_conversation_envs(args)
+        model = rnn_model.QCommModel.build(args, envs[0])
+        oracle_model = rnn_model.OracleCommModel.build(args, eval_envs[0])
+    elif args.task_type == "navigation":
+        graph, envs, eval_envs = util.build_webnav_envs(args)
+        model = rnn_model.QNavigatorModel.build(args, envs[0])
+        oracle_model = model
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)
@@ -199,6 +215,9 @@ def train(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
+
+    p.add_argument("--task_type", choices=["navigation", "communication"],
+                   default="communication")
 
     p.add_argument("--path_length", default=3, type=int)
     p.add_argument("--beam_size", default=10, type=int)

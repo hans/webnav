@@ -8,6 +8,7 @@ from webnav.agents import oracle
 from webnav.environments import EmbeddingWebNavEnvironment
 from webnav.environments import SituatedConversationEnvironment
 from webnav.environments.conversation import SEND, RECEIVE, UTTER, WRAPPED
+from webnav.environments.webnav_env import WebNavEnvironment
 
 
 def discount_cumsum(x, discount):
@@ -17,9 +18,9 @@ def discount_cumsum(x, discount):
     return scipy.signal.lfilter([1], [1, -discount], x[::-1], axis=0)[::-1]
 
 
-def build_webnav_conversation_envs(args):
+def build_webnav_envs(args):
     """
-    Build situated conversation environments wrapped around the webnav task.
+    Build webnav environments.
     """
     if args.data_type == "wikinav":
         if not args.qp_path:
@@ -43,7 +44,16 @@ def build_webnav_conversation_envs(args):
                                                    goal_reward=args.goal_reward,
                                                    is_training=False,
                                                    oracle=False)
-                   for _ in range(args.batch_size)]
+                        for _ in range(args.batch_size)]
+
+    return graph, webnav_envs, webnav_eval_envs
+
+
+def build_webnav_conversation_envs(args):
+    """
+    Build situated conversation environments wrapped around the webnav task.
+    """
+    graph, webnav_envs, webnav_eval_envs = build_webnav_envs(args)
 
     # Wrap core environment in conversation environment.
     # TODO maybe don't need to replicate agents?
@@ -56,7 +66,10 @@ def build_webnav_conversation_envs(args):
 
 
 def log_trajectory(trajectory, target, env, log_f):
-    graph = env._env._graph
+    webnav_env = env
+    if not isinstance(env, WebNavEnvironment):
+        webnav_env = webnav_env._env
+    graph = webnav_env._graph
 
     tqdm.write("Trajectory: (target %s)"
                 % graph.get_article_title(target), log_f)
