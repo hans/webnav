@@ -221,8 +221,8 @@ def q_learn(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
                for t, scores_t in enumerate(scores)]
 
     # metadata
-    batch_size = tf.shape(scores_t)[0]
-    n_actions = tf.shape(scores_t)[1]
+    batch_size = tf.shape(scores[0])[0]
+    n_actions = tf.shape(scores[0])[1]
 
     # Q(s, a) for states visited, actions taken
     # easiest to do this lookup as Gather on a flattened scores array
