@@ -57,11 +57,15 @@ def build_webnav_conversation_envs(args):
 
     # Wrap core environment in conversation environment.
     # TODO maybe don't need to replicate agents?
-    envs = [SituatedConversationEnvironment(env, oracle.WebNavEmbeddingAgent(env),
-                                            include_utterance_in_observation=True)
+    envs = [SituatedConversationEnvironment(
+                env,
+                oracle.WebNavEmbeddingAgent(env, match_reward=args.match_reward),
+                include_utterance_in_observation=True)
             for env in webnav_envs]
-    eval_envs = [SituatedConversationEnvironment(env, oracle.WebNavEmbeddingAgent(env),
-                                                 include_utterance_in_observation=True)
+    eval_envs = [SituatedConversationEnvironment(
+                    env,
+                    oracle.WebNavEmbeddingAgent(env, match_reward=args.match_reward),
+                    include_utterance_in_observation=True)
                  for env in webnav_eval_envs]
 
     return graph, envs, eval_envs

@@ -204,7 +204,7 @@ def train(args):
 
                 # Sample a model for rollouts.
                 is_oracle = np.random.random() < args.oracle_freq
-                epsilon = 0.0 if is_oracle else 0.1
+                epsilon = 0.0 if is_oracle else args.epsilon
                 active_q_fn = oracle_model if is_oracle else None
 
                 actions, rewards, masks = [], [], []
@@ -247,9 +247,12 @@ if __name__ == "__main__":
     p.add_argument("--path_length", default=3, type=int)
     p.add_argument("--beam_size", default=10, type=int)
     p.add_argument("--batch_size", default=64, type=int)
+
     p.add_argument("--learning_rate", default=0.001, type=float)
     p.add_argument("--gamma", default=0.99, type=float)
+    p.add_argument("--epsilon", default=0.1, type=float)
     p.add_argument("--goal_reward", default=10, type=float)
+    p.add_argument("--match_reward", default=1, type=float)
 
     p.add_argument("--n_epochs", default=3, type=int)
     p.add_argument("--n_eval_iters", default=2, type=int)
