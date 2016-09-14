@@ -216,14 +216,28 @@ def q_learn(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
     masks = [tf.placeholder(tf.float32, (None,), name="mask_%i" % t)
              for t in range(num_timesteps)]
 
-    # Calculate Q targets.
+    # By default, actions are just argmax; this can/should be overridden
+    actions = [tf.to_int32(tf.argmax(scores_t, 1), name="actions_%i" % t)
+               for t, scores_t in enumerate(scores)]
+
+    # metadata
+    batch_size = tf.shape(scores_t)[0]
+    n_actions = tf.shape(scores_t)[1]
+
+    # Q(s, a) for states visited, actions taken
+    # easiest to do this lookup as Gather on a flattened scores array
+    q_a_pred = [tf.gather(tf.reshape(scores_t, (-1,)),
+                          actions_t + tf.range(batch_size) * n_actions)
+                for scores_t, actions_t in zip(scores, actions)]
+    # max_a' Q(s, a') for states visited
+    q_max_pred = [tf.reduce_max(scores_t, 1) for scores_t in scores]
+
     q_targets = []
-    q_a_pred = [tf.reduce_max(scores_t, 1) for scores_t in scores]
     for t in range(num_timesteps):
         target = rewards[t]
         if t < num_timesteps - 1:
             # Bootstrap with max_a Q_{t+1}
-            target += gamma * q_a_pred[t + 1]
+            target += gamma * q_max_pred[t + 1]
 
         q_targets.append(target)
 
@@ -250,7 +264,7 @@ def q_learn(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
 
     tf.scalar_summary("loss", loss)
 
-    inputs = (rewards, masks)
+    inputs = (actions, rewards, masks)
     outputs = (losses, loss)
     return inputs, outputs
 
@@ -296,11 +310,12 @@ class Model(object):
         """
         raise NotImplementedError
 
-    def get_losses(self, rewards, masks):
+    def get_losses(self, actions, rewards, masks):
         """
         Compute Q-learning loss after a rollout has completed.
 
         Args:
+            actions: Sequence of `batch-size` length action indices
             rewards: Sequence of `batch_size`-length per-timestep reward arrays
             masks: Sequence of `batch_size` loss masks
 
@@ -329,7 +344,7 @@ class QNavigatorModel(Model):
         all_inputs = self.current_node + self.candidates + [self.query]
         q_inputs, q_outputs = q_learn(all_inputs, self.scores,
                                       self.path_length, self.gamma)
-        self.rewards, self.masks = q_inputs
+        self.actions, self.rewards, self.masks = q_inputs
         self.all_losses, self.loss = q_outputs
 
         self.sm = None
@@ -338,7 +353,7 @@ class QNavigatorModel(Model):
     @overrides
     def all_feeds(self):
         return self.current_node + self.candidates + [self.query] + \
-                self.rewards + self.masks
+                self.actions + self.rewards + self.masks
 
     @property
     @overrides
@@ -382,10 +397,12 @@ class QNavigatorModel(Model):
         scores_t = self.sm.run(self.scores[t], feed)
         return scores_t
 
-    def get_losses(self, rewards, masks):
+    def get_losses(self, actions, rewards, masks):
         fetches = self.all_losses
         feeds = {self.rewards[t]: rewards_t
                  for t, rewards_t in enumerate(rewards)}
+        feeds.update({self.actions[t]: actions_t
+                      for t, actions_t in enumerate(actions)})
         losses = self.sm.run(fetches, feeds)
         return losses
 
@@ -429,7 +446,7 @@ class QCommModel(CommModel):
                 self.message_sent + self.message_recv + [self.query]
         q_inputs, q_outputs = q_learn(all_inputs, self.scores,
                                       self.path_length, self.gamma)
-        self.rewards, self.masks = q_inputs
+        self.actions, self.rewards, self.masks = q_inputs
         self.all_losses, self.loss = q_outputs
 
         self.sm = None
@@ -438,7 +455,8 @@ class QCommModel(CommModel):
     @overrides
     def all_feeds(self):
         return self.current_node + self.candidates + self.message_sent + \
-                self.message_recv + [self.query] + self.rewards + self.masks
+                self.message_recv + [self.query] + self.actions + self.rewards + \
+                self.masks
 
     @property
     @overrides
@@ -491,10 +509,12 @@ class QCommModel(CommModel):
         scores_t = self.sm.run(self.scores[t], feed)
         return scores_t
 
-    def get_losses(self, rewards, masks):
+    def get_losses(self, actions, rewards, masks):
         fetches = self.all_losses
         feeds = {self.rewards[t]: rewards_t
                  for t, rewards_t in enumerate(rewards)}
+        feeds.update({self.actions[t]: actions_t
+                      for t, actions_t in enumerate(actions)})
         losses = self.sm.run(fetches, feeds)
         return losses
 
@@ -559,5 +579,5 @@ class OracleCommModel(CommModel):
             self._state = self.SEND
             return self._query_which
 
-    def get_losses(self, rewards, masks):
+    def get_losses(self, actions, rewards, masks):
         return 0.0

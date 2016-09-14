@@ -56,7 +56,7 @@ def eval(model, envs, sv, sm, log_f, args):
     total_returns = 0.0
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
-        rewards, masks = [], []
+        actions, rewards, masks = [], [], []
 
         # Draw a random batch element to track for this batch.
         sample_idx = np.random.choice(len(envs))
@@ -98,10 +98,11 @@ def eval(model, envs, sv, sm, log_f, args):
                                   get_webnav_env(sample_idx).cur_article_id),
                                  reward))
 
+            actions.append(actions_t)
             rewards.append(rewards_t)
             masks.append(masks_t)
 
-        losses_i = np.asarray(model.get_losses(rewards, masks))
+        losses_i = np.asarray(model.get_losses(actions, rewards, masks))
 
         # Accumulate.
         per_timestep_losses += losses_i
@@ -197,12 +198,13 @@ def train(args):
                 epsilon = 0.0 if is_oracle else 0.1
                 active_q_fn = oracle_model if is_oracle else None
 
-                rewards, masks = [], []
+                actions, rewards, masks = [], [], []
                 rollout_info = rollout(model, envs, args,
                                        epsilon=epsilon,
                                        active_q_fn=active_q_fn)
                 for step in rollout_info:
-                    t, _, _, _, _, rewards_t, masks_t = step
+                    t, _, _, actions_t, _, rewards_t, masks_t = step
+                    actions.append(actions_t)
                     rewards.append(rewards_t)
                     masks.append(masks_t)
 
@@ -213,6 +215,8 @@ def train(args):
                 fetches = [train_op, summary_fetch, model.loss]
                 feeds = {model.rewards[t]: rewards_t
                          for t, rewards_t in enumerate(rewards)}
+                feeds.update({model.actions[t]: actions_t
+                              for t, actions_t in enumerate(actions)})
                 _, summary, loss = sm.run(fetches, feeds)
 
                 sm.reset_partial_handle()
