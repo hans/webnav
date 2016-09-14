@@ -42,7 +42,8 @@ class SituatedConversationEnvironment(Env):
     space of the wrapped environment and the utterance space.
     """
 
-    def __init__(self, env, b_agent, *args, **kwargs):
+    def __init__(self, env, b_agent, include_utterance_in_observation=False,
+                 *args, **kwargs):
         """
         Args:
             env: Environment which is being wrapped by this conversational
@@ -52,6 +53,9 @@ class SituatedConversationEnvironment(Env):
                 managed by this class.
             b_agent: `Agent` instance with which the learned agent will
                 interact.
+            include_utterance_in_observation: If `True`, after making an
+                utterance, include the uttered token as part of the next
+                observation
         """
         super(SituatedConversationEnvironment, self).__init__(*args, **kwargs)
 
@@ -65,9 +69,18 @@ class SituatedConversationEnvironment(Env):
         # Observations are a combination of observations from the wrapped
         # environment and a representation of any utterance received from the
         # agent.
+        #
+        # Optionally include a single-token utterance observation as well.
         self._received_message_space = DiscreteBinaryBag(self.vocab_size)
-        self._obs_space = Product(env.observation_space,
-                                  self._received_message_space)
+        if include_utterance_in_observation:
+            utterance_space = Discrete(self.vocab_size)
+            self._obs_space = Product(env.observation_space,
+                                      self._received_message_space,
+                                      utterance_space)
+        else:
+            self._obs_space = Product(env.observation_space,
+                                      self._received_message_space)
+        self.include_utterance_in_observation = include_utterance_in_observation
 
         # The agent can choose to take any action in the wrapped env, to add a
         # single token to its message, or to send a message to the agent.
@@ -105,7 +118,11 @@ class SituatedConversationEnvironment(Env):
         # Add a dummy message to the history.
         self._received.append(np.zeros((self.vocab_size,), dtype=np.uint8))
 
-        return (self._last_wrapped_obs, self._received[-1])
+        if self.include_utterance_in_observation:
+            return (self._last_wrapped_obs, self._received[-1],
+                    np.zeros((self.vocab_size,)))
+        else:
+            return (self._last_wrapped_obs, self._received[-1])
 
     def describe_action(self, action):
         """
@@ -160,7 +177,16 @@ class SituatedConversationEnvironment(Env):
 
             self._message = []
 
-        observation = (self._last_wrapped_obs, self._received[-1])
+        # Build observation from new state.
+        if self.include_utterance_in_observation:
+            utterance_obs = np.zeros((self.vocab_size,))
+            if action_type == UTTER:
+                utterance_obs[data] = 1
+            observation = (self._last_wrapped_obs, self._received[-1],
+                           utterance_obs)
+        else:
+            observation = (self._last_wrapped_obs, self._received[-1])
+
         self._timestep += 1
         return Step(observation=observation, reward=reward, done=done)
 

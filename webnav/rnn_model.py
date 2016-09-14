@@ -468,14 +468,14 @@ class QCommModel(CommModel):
             self._reset_batch(batch_size)
 
         for i, obs_i in enumerate(observations):
-            # TODO integrate message_sent / message_recv
-            nav_obs, message = obs_i
+            nav_obs, message_recv, message_sent = obs_i
             query_i, current_node_i, beam_i = nav_obs
 
             self._d_query[i] = query_i
             self._d_current_nodes[i] = current_node_i
             self._d_candidates[i] = beam_i
-            self._d_message_recv[i] = message
+            self._d_message_recv[i] = message_recv
+            self._d_message_sent[i] = message_sent
 
         feed = {
             self.current_node[t]: self._d_current_nodes,
