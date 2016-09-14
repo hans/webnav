@@ -118,6 +118,9 @@ def rollout(q_fn, envs, args, epsilon=0.1, active_q_fn=None):
 
     for t in range(args.path_length):
         scores_t = q_fn.step(t, observations, masks_t)
+        if active_q_fn is not None:
+            # Override Q-function scores.
+            scores_t = active_q_fn.step(t, observations, masks_t)
 
         # Epsilon-greedy sampling
         actions = scores_t.argmax(axis=1)
