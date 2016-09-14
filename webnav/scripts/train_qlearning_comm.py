@@ -37,23 +37,20 @@ def eval(model, envs, sv, sm, log_f, args):
         args:
     """
 
-    def get_webnav_env(idx):
-        env = envs[idx]
-        if not isinstance(env, WebNavEnvironment):
-            env = env._env
-        return env
-
-    # Get a representative webnav env
-    env = get_webnav_env(0)
-    assert not env.is_training
-    graph = env._graph
+    # Get webnav envs (they may be wrapped right now)
+    if isinstance(envs[0], WebNavEnvironment):
+        webnav_envs = envs
+    else:
+        webnav_envs = [env._env for env in envs]
+    assert not webnav_envs[0].is_training
+    graph = webnav_envs[0]._graph
 
     trajectories, targets = [], []
     losses = []
 
     # Per-timestep loss accumulator.
     per_timestep_losses = np.zeros((args.path_length,))
-    total_returns = 0.0
+    total_returns, success_rate = 0.0, 0.0
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         actions, rewards, masks = [], [], []
@@ -61,7 +58,7 @@ def eval(model, envs, sv, sm, log_f, args):
         # Draw a random batch element to track for this batch.
         sample_idx = np.random.choice(len(envs))
         sample_env = envs[sample_idx]
-        sample_navigator = get_webnav_env(sample_idx)._navigator
+        sample_navigator = webnav_envs[sample_idx]._navigator
         sample_done = False
 
         for iter_info in rollout(model, envs, args, epsilon=0):
@@ -95,7 +92,7 @@ def eval(model, envs, sv, sm, log_f, args):
                 else:
                     traj.append((WRAPPED,
                                  (action,
-                                  get_webnav_env(sample_idx).cur_article_id),
+                                  webnav_envs[sample_idx].cur_article_id),
                                  reward))
 
             actions.append(actions_t)
@@ -104,20 +101,28 @@ def eval(model, envs, sv, sm, log_f, args):
 
         losses_i = np.asarray(model.get_losses(actions, rewards, masks))
 
+        successes = [webnav_env._navigator.success
+                     for webnav_env in webnav_envs]
+        success_rate += np.asarray(successes).mean()
+
         # Accumulate.
         per_timestep_losses += losses_i
-        total_returns += np.array(rewards).sum(axis=0).mean()
+        total_returns += np.asarray(rewards).sum(axis=0).mean()
         trajectories.append(traj)
 
         sm.reset_partial_handle()
 
+    # NB: assumes same batch size at each eval iter for correctness
     per_timestep_losses /= float(args.n_eval_iters)
     total_returns /= float(args.n_eval_iters)
+    success_rate /= float(args.n_eval_iters)
 
     ##############
 
     loss = per_timestep_losses.mean()
     tqdm.write("Validation loss: %.10f" % loss, log_f)
+    tqdm.write("Success rate: %.5f%%" % (success_rate * 100.0), log_f)
+    tqdm.write("Mean undiscounted returns: %f" % total_returns, log_f)
 
     tqdm.write("Per-timestep validation losses:\n%s\n"
                % "\n".join("\t% 2i: %.10f" % (t, loss_t)
@@ -131,6 +136,8 @@ def eval(model, envs, sv, sm, log_f, args):
     # Write summaries using supervisor.
     summary = tf.Summary()
     summary.value.add(tag="eval/loss", simple_value=np.asscalar(loss))
+    summary.value.add(tag="eval/success_rate",
+                      simple_value=np.asscalar(success_rate))
     summary.value.add(tag="eval/mean_reward",
                       simple_value=np.asscalar(total_returns))
     for t, loss_t in enumerate(per_timestep_losses):
