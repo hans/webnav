@@ -95,8 +95,10 @@ def eval(model, envs, sv, sm, log_f, args):
                                   webnav_envs[sample_idx].cur_article_id),
                                  reward))
 
+            rewards_t = np.asarray(rewards_t)
+            masks_t = np.asarray(masks_t)
             actions.append(actions_t)
-            rewards.append(rewards_t)
+            rewards.append(rewards_t * masks_t)
             masks.append(masks_t)
 
         losses_i = np.asarray(model.get_losses(actions, rewards, masks))
