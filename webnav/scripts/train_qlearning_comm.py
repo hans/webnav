@@ -193,6 +193,10 @@ def train(args):
     # Open a file for detailed progress logging.
     log_f = open(os.path.join(args.logdir, "debug.log"), "w")
 
+    # Save param info to file
+    with open(os.path.join(args.logdir, "params"), "w") as params_f:
+        pprint.pprint(vars(args), stream=params_f)
+
     batches_per_epoch = graph.get_num_paths(True) / args.batch_size + 1
     with sv.managed_session(config=session_config) as sess:
         for e in range(args.n_epochs):
@@ -288,6 +292,4 @@ if __name__ == "__main__":
     p.add_argument("--emb_path")
 
     args = p.parse_args()
-    pprint.pprint(vars(args))
-
     train(args)
