@@ -159,7 +159,12 @@ def train(args):
         oracle_model = model
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
-    opt = tf.train.MomentumOptimizer(args.learning_rate, 0.9)
+    learning_rate = tf.train.exponential_decay(
+            args.learning_rate, global_step, args.learning_rate_decay_interval,
+            args.learning_rate_decay_rate)
+    tf.scalar_summary("learning_rate", learning_rate)
+
+    opt = tf.train.MomentumOptimizer(learning_rate, 0.9)
     train_op_ = opt.minimize(model.loss, global_step=global_step)
     # Build a `train_op` Tensor which depends on the actual train op target.
     # This is a hack to get around the current design of partial_run, which
@@ -248,6 +253,11 @@ if __name__ == "__main__":
     p.add_argument("--batch_size", default=64, type=int)
 
     p.add_argument("--learning_rate", default=0.001, type=float)
+    p.add_argument("--learning_rate_decay_interval", default=750, type=int,
+                   help="Number of batches by which we should decay once")
+    p.add_argument("--learning_rate_decay_rate", default=0.9, type=float,
+                   help="Learning rate exponential decay rate")
+
     p.add_argument("--gamma", default=0.99, type=float)
     p.add_argument("--epsilon", default=0.1, type=float)
     p.add_argument("--goal_reward", default=10, type=float)
