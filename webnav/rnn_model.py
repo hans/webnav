@@ -201,7 +201,7 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
         return rnn_inputs, outputs
 
 
-def q_learn(scores, num_timesteps, gamma=0.99):
+def q_learn(scores, num_timesteps, sarsa=False, gamma=0.99):
     """
     Build a graph to train the given scoring function by Q-learning.
 
@@ -210,6 +210,8 @@ def q_learn(scores, num_timesteps, gamma=0.99):
     Args:
         scores: `batch_size * n_actions` tensor of scores
         num_timesteps: Maximum length of rollout
+        sarsa: If `True`, use actual actions taken rather than max-scoring
+            actions to compute backups
         gamma: Scalar discount factor
 
     Returns:
@@ -244,8 +246,9 @@ def q_learn(scores, num_timesteps, gamma=0.99):
     for t in range(num_timesteps):
         target = rewards[t]
         if t < num_timesteps - 1:
-            # Bootstrap with max_a Q_{t+1}
-            target += gamma * q_max_pred[t + 1]
+            # Bootstrap with Q-learning or SARSA update
+            backup = q_a_pred[t + 1] if sarsa else q_max_pred[t + 1]
+            target += gamma * backup
 
         q_targets.append(target)
 
