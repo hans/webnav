@@ -175,6 +175,11 @@ def train(args):
 
     summary_op = tf.merge_all_summaries()
 
+    # Don't hog GPU memory.
+    gpu_options = tf.GPUOptions(
+            per_process_gpu_memory_fraction=args.gpu_memory)
+    session_config = tf.ConfigProto(gpu_options=gpu_options)
+
     # Build a Supervisor session that supports partial runs.
     sm = PartialRunSessionManager(
             partial_fetches=model.all_fetches + [train_op, summary_op],
@@ -189,7 +194,7 @@ def train(args):
     log_f = open(os.path.join(args.logdir, "debug.log"), "w")
 
     batches_per_epoch = graph.get_num_paths(True) / args.batch_size + 1
-    with sv.managed_session() as sess:
+    with sv.managed_session(config=session_config) as sess:
         for e in range(args.n_epochs):
             if sv.should_stop():
                 break
@@ -274,6 +279,7 @@ if __name__ == "__main__":
     p.add_argument("--eval_interval", default=100, type=int)
     p.add_argument("--summary_interval", default=100, type=int)
     p.add_argument("--n_eval_trajectories", default=5, type=int)
+    p.add_argument("--gpu_memory", default=0.22, type=float)
 
     p.add_argument("--data_type", choices=["wikinav", "wikispeedia"],
                    default="wikinav")
