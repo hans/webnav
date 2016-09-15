@@ -212,7 +212,7 @@ def train(args):
                                        epsilon=epsilon,
                                        active_q_fn=active_q_fn)
                 for step in rollout_info:
-                    t, _, _, actions_t, _, rewards_t, masks_t = step
+                    t, _, _, actions_t, rewards_t, _, masks_t = step
                     actions.append(actions_t)
                     rewards.append(rewards_t)
                     masks.append(masks_t)
