@@ -181,8 +181,7 @@ def train(args):
     model.sm = sm
 
     # Open a file for detailed progress logging.
-    import sys
-    log_f = sys.stdout # open(os.path.join(args.logdir, "debug.log"), "w")
+    log_f = open(os.path.join(args.logdir, "debug.log"), "w")
 
     batches_per_epoch = graph.get_num_paths(True) / args.batch_size + 1
     with sv.managed_session() as sess:
