@@ -201,8 +201,22 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
         return rnn_inputs, outputs
 
 
-def q_learn(inputs, scores, num_timesteps, embedding_dim, gamma=0.99,
-            name="model"):
+def q_learn(scores, num_timesteps, gamma=0.99):
+    """
+    Build a graph to train the given scoring function by Q-learning.
+
+    Supports variable-length rollouts.
+
+    Args:
+        scores: `batch_size * n_actions` tensor of scores
+        num_timesteps: Maximum length of rollout
+        gamma: Scalar discount factor
+
+    Returns:
+        inputs: `(actions, rewards, masks)` placeholders
+        outputs: `(all_losses, loss)`
+    """
+
     # Per-timestep non-discounted rewards
     rewards = [tf.placeholder(tf.float32, (None,), name="rewards_%i" % t)
                for t in range(num_timesteps)]
@@ -336,8 +350,7 @@ class QNavigatorModel(Model):
         self.scores, = rnn_outputs
 
         all_inputs = self.current_node + self.candidates + [self.query]
-        q_inputs, q_outputs = q_learn(all_inputs, self.scores,
-                                      self.path_length, self.gamma)
+        q_inputs, q_outputs = q_learn(self.scores, self.path_length, self.gamma)
         self.actions, self.rewards, self.masks = q_inputs
         self.all_losses, self.loss = q_outputs
 
@@ -438,8 +451,7 @@ class QCommModel(CommModel):
 
         all_inputs = self.current_node + self.candidates + \
                 self.message_sent + self.message_recv + [self.query]
-        q_inputs, q_outputs = q_learn(all_inputs, self.scores,
-                                      self.path_length, self.gamma)
+        q_inputs, q_outputs = q_learn(self.scores, self.path_length, self.gamma)
         self.actions, self.rewards, self.masks = q_inputs
         self.all_losses, self.loss = q_outputs
 
