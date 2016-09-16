@@ -9,6 +9,7 @@ from webnav.environments import EmbeddingWebNavEnvironment
 from webnav.environments import SituatedConversationEnvironment
 from webnav.environments.conversation import SEND, RECEIVE, UTTER, WRAPPED
 from webnav.environments.webnav_env import WebNavEnvironment
+from webnav.session import PartialRunSessionManager
 
 
 def discount_cumsum(x, discount):
@@ -169,3 +170,27 @@ def make_cell_zero_state(cell, batch_size):
         raise ValueError("Unknown cell state size declaration %s"
                          % cell.state_size)
 
+
+def prepare_session_helpers(args, partial_fetches, partial_feeds,
+                            global_step=None):
+    """
+    Prepare SessionManager and Supervisor instances for training/testing.
+
+    Returns:
+        session_manager:
+        supervisor:
+        session_config:
+    """
+
+    # Don't hog GPU memory.
+    gpu_options = tf.GPUOptions(
+            per_process_gpu_memory_fraction=args.gpu_memory)
+    session_config = tf.ConfigProto(gpu_options=gpu_options)
+
+    # Build a Supervisor session that supports partial runs.
+    sm = PartialRunSessionManager(partial_fetches=partial_fetches,
+                                  partial_feeds=partial_feeds)
+    sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
+                             session_manager=sm, summary_op=None)
+
+    return sm, sv, session_config

@@ -168,7 +168,7 @@ def eval(model, envs, sv, sm, log_f, args):
     sv.summary_computed(sm.session, summary)
 
 
-def train(args):
+def build_core(args):
     if args.task_type == "communication":
         graph, envs, eval_envs = util.build_webnav_conversation_envs(args)
         model = rnn_model.QCommModel.build(args, envs[0])
@@ -177,6 +177,12 @@ def train(args):
         graph, envs, eval_envs = util.build_webnav_envs(args)
         model = rnn_model.QNavigatorModel.build(args, envs[0])
         oracle_model = model
+
+    return graph, envs, eval_envs, model, oracle_model
+
+
+def train(args):
+    graph, envs, eval_envs, model, oracle_model = build_core(args)
 
     global_step = tf.Variable(0, trainable=False, name="global_step")
     learning_rate = tf.train.exponential_decay(
@@ -195,19 +201,10 @@ def train(args):
 
     summary_op = tf.merge_all_summaries()
 
-    # Don't hog GPU memory.
-    gpu_options = tf.GPUOptions(
-            per_process_gpu_memory_fraction=args.gpu_memory)
-    session_config = tf.ConfigProto(gpu_options=gpu_options)
-
-    # Build a Supervisor session that supports partial runs.
-    sm = PartialRunSessionManager(
+    sm, sv, session_config = util.prepare_session_helpers(args,
             partial_fetches=model.all_fetches + [train_op, summary_op],
-            partial_feeds=model.all_feeds)
-    sv = tf.train.Supervisor(logdir=args.logdir, global_step=global_step,
-                             session_manager=sm, summary_op=None)
-
-    # Prepare model for execution
+            partial_feeds=model.all_feeds,
+            global_step=global_step)
     model.sm = sm
 
     # Open a file for detailed progress logging.
