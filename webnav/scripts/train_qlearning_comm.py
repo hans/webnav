@@ -161,7 +161,7 @@ def train(args):
     global_step = tf.Variable(0, trainable=False, name="global_step")
     learning_rate = tf.train.exponential_decay(
             args.learning_rate, global_step, args.learning_rate_decay_interval,
-            args.learning_rate_decay_rate)
+            args.learning_rate_decay_rate, staircase=True)
     tf.scalar_summary("learning_rate", learning_rate)
 
     opt = tf.train.MomentumOptimizer(learning_rate, 0.9)
@@ -262,7 +262,7 @@ if __name__ == "__main__":
     p.add_argument("--batch_size", default=64, type=int)
 
     p.add_argument("--learning_rate", default=0.001, type=float)
-    p.add_argument("--learning_rate_decay_interval", default=750, type=int,
+    p.add_argument("--learning_rate_decay_interval", default=10000, type=int,
                    help="Number of batches by which we should decay once")
     p.add_argument("--learning_rate_decay_rate", default=0.9, type=float,
                    help="Learning rate exponential decay rate")
