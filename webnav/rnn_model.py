@@ -543,6 +543,7 @@ class OracleCommModel(CommModel):
     RECEIVE = 2
 
     def __init__(self, *args, **kwargs):
+        kwargs.pop("sarsa", None)
         super(OracleCommModel, self).__init__(*args, **kwargs)
 
         assert isinstance(self.agent, OracleAgent)
