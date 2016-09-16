@@ -208,38 +208,10 @@ def run_eval(args):
             global_step=None)
     model.sm = sm
 
-    all_results = EvalResults(
-            n_rollouts=[0],
-            per_timestep_losses=[np.zeros(args.path_length)],
-            total_returns=[0.0],
-            success_rate=[0.0],
-            reach_rate=[0.0],
-            avg_steps_to_reach=[0.0])
-
     with sv.managed_session(config=session_config) as sess:
-        n_iters = 10
-        for i in range(n_iters):
-            eval_results = eval(model, eval_envs, sv, sm, log_f, args)
-            all_results.n_rollouts[0] += eval_results.n_rollouts
-            all_results.per_timestep_losses[0] += eval_results.per_timestep_losses
-            all_results.total_returns[0] += eval_results.total_returns
-            all_results.success_rate[0] += eval_results.success_rate
-            all_results.reach_rate[0] += eval_results.reach_rate
-            all_results.avg_steps_to_reach[0] += eval_results.avg_steps_to_reach
+        eval_results = eval(model, eval_envs, sv, sm, log_f, args)
 
-            sm.reset_partial_handle()
-
-        # Calculate mean
-        n_iters = float(n_iters)
-        all_results = EvalResults(
-            all_results.n_rollouts[0],
-            all_results.per_timestep_losses[0] / n_iters,
-            all_results.total_returns[0] / n_iters,
-            all_results.success_rate[0] / n_iters,
-            all_results.reach_rate[0] / n_iters,
-            all_results.avg_steps_to_reach[0] / n_iters)
-
-    pprint.pprint(all_results)
+    pprint.pprint(eval_results)
 
     log_f.close()
 
