@@ -55,7 +55,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         actions, rewards, masks = [], [], []
-        reached_target = np.zeros((len(envs),))
+        reached_target = np.zeros((len(envs),)) + np.inf
 
         # Draw a random batch element to track for this batch.
         sample_idx = np.random.choice(len(envs))
@@ -115,8 +115,8 @@ def eval(model, envs, sv, sm, log_f, args):
         success_rate += np.asarray(successes).mean()
 
         # # of steps required to reach target, for those rollouts which did
-        reached_steps = np.nonzero(reached_target)[0]
-        reach_rate += len(reached_steps) / float(len(envs))
+        reached_steps = reached_target[np.isfinite(reached_target)]
+        reach_rate += len(reached_steps) / float(len(reached_target))
         if len(reached_steps) > 0:
             avg_steps_to_reach += np.asscalar(reached_steps.mean())
 
