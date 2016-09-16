@@ -308,7 +308,8 @@ class Model(object):
             env: Representative environment instance
         """
         return cls(args.beam_size, env, args.path_length,
-                   env.embedding_dim, args.gamma)
+                   env.embedding_dim, args.gamma,
+                   sarsa=args.algorithm == "sarsa")
 
     def step(self, t, observations, masks_t):
         """
@@ -343,6 +344,7 @@ class QNavigatorModel(Model):
     """
 
     def __init__(self, *args, **kwargs):
+        sarsa = kwargs.pop("sarsa", False)
         super(QNavigatorModel, self).__init__(*args, **kwargs)
 
         rnn_inputs, rnn_outputs = rnn_model(self.beam_size,
@@ -352,8 +354,8 @@ class QNavigatorModel(Model):
         self.current_node, self.query, self.candidates = rnn_inputs
         self.scores, = rnn_outputs
 
-        all_inputs = self.current_node + self.candidates + [self.query]
-        q_inputs, q_outputs = q_learn(self.scores, self.path_length, self.gamma)
+        q_inputs, q_outputs = q_learn(self.scores, self.path_length,
+                                      gamma=self.gamma, sarsa=sarsa)
         self.actions, self.rewards, self.masks = q_inputs
         self.all_losses, self.loss = q_outputs
 
@@ -436,12 +438,14 @@ class CommModel(Model):
         """
         webnav_env = env._env
         return cls(args.beam_size, env, args.path_length,
-                   webnav_env.embedding_dim, args.gamma)
+                   webnav_env.embedding_dim, args.gamma,
+                   sarsa=args.algorithm == "sarsa")
 
 
 class QCommModel(CommModel):
 
     def __init__(self, *args, **kwargs):
+        sarsa = kwargs.pop("sarsa", False)
         super(QCommModel, self).__init__(*args, **kwargs)
 
         rnn_inputs, rnn_outputs = rnn_comm_model(self.beam_size, self.agent,
@@ -452,9 +456,8 @@ class QCommModel(CommModel):
                 self.message_sent, self.message_recv = rnn_inputs
         self.scores, = rnn_outputs
 
-        all_inputs = self.current_node + self.candidates + \
-                self.message_sent + self.message_recv + [self.query]
-        q_inputs, q_outputs = q_learn(self.scores, self.path_length, self.gamma)
+        q_inputs, q_outputs = q_learn(self.scores, self.path_length,
+                                      gamma=self.gamma, sarsa=sarsa)
         self.actions, self.rewards, self.masks = q_inputs
         self.all_losses, self.loss = q_outputs
 

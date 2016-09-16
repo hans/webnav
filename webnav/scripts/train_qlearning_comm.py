@@ -275,6 +275,8 @@ if __name__ == "__main__":
     p.add_argument("--n_epochs", default=3, type=int)
     p.add_argument("--n_eval_iters", default=2, type=int)
 
+    p.add_argument("--algorithm", choices=["qlearning", "sarsa"],
+                   default="qlearning")
     p.add_argument("--oracle_freq", default=0.0, type=float,
                    help=("Decimal frequency of oracle rollouts vs. all "
                          "rollouts (oracle + learned model)"))
