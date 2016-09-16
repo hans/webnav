@@ -96,6 +96,9 @@ def comm_scores(scores, state, agent, name="communication"):
     and agent hidden state.
     """
     with tf.op_scope([scores, state], name):
+        # Batch norm the Q-scores coming from the navigation model.
+        scores = layers.batch_norm(scores)
+
         comm_state = tf.concat(1, (scores, state))
         comm_actions = agent.vocab_size + 1
         comm_scores_t = layers.fully_connected(comm_state, comm_actions,
