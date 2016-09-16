@@ -99,8 +99,8 @@ def get_default_wikispeedia_graph():
         path_length = 10
         graph = web_graph.EmbeddedWikispeediaGraph(
                 "./data/wikispeedia/wikispeedia.pkl",
-                "./data/wikispeedia/wikispeedia_embeddings.npz",
-                path_length)
+                path_length,
+                emb_path="./data/wikispeedia/wikispeedia_embeddings.npz")
         get_default_wikispeedia_graph.graph = graph
     return get_default_wikispeedia_graph.graph
 
