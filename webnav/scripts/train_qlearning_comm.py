@@ -23,6 +23,11 @@ from webnav.session import PartialRunSessionManager
 from webnav.util import rollout
 
 
+EvalResults = namedtuple("EvalResults", ["n_rollouts",
+                                         "per_timestep_losses", "total_returns",
+                                         "success_rate", "reach_rate",
+                                         "avg_steps_to_reach"])
+
 
 def eval(model, envs, sv, sm, log_f, args):
     """
@@ -167,6 +172,14 @@ def eval(model, envs, sv, sm, log_f, args):
                           simple_value=np.asscalar(loss_t))
     sv.summary_computed(sm.session, summary)
 
+    n_rollouts = len(envs) * args.n_eval_iters
+    return EvalResults(n_rollouts=n_rollouts,
+                       per_timestep_losses=per_timestep_losses,
+                       total_returns=total_returns,
+                       success_rate=success_rate,
+                       reach_rate=reach_rate,
+                       avg_steps_to_reach=avg_steps_to_reach)
+
 
 def build_core(args):
     if args.task_type == "communication":
@@ -179,6 +192,56 @@ def build_core(args):
         oracle_model = model
 
     return graph, envs, eval_envs, model, oracle_model
+
+
+def run_eval(args):
+    """
+    Run a standalone evaluation on the given trained model.
+    """
+    graph, _, eval_envs, model, _ = build_core(args)
+
+    log_f = open(os.path.join(args.logdir, "eval"), "w")
+
+    sm, sv, session_config = util.prepare_session_helpers(args,
+            partial_fetches=model.all_fetches,
+            partial_feeds=model.all_feeds,
+            global_step=None)
+    model.sm = sm
+
+    all_results = EvalResults(
+            n_rollouts=[0],
+            per_timestep_losses=[np.zeros(args.path_length)],
+            total_returns=[0.0],
+            success_rate=[0.0],
+            reach_rate=[0.0],
+            avg_steps_to_reach=[0.0])
+
+    with sv.managed_session(config=session_config) as sess:
+        n_iters = 10
+        for i in range(n_iters):
+            eval_results = eval(model, eval_envs, sv, sm, log_f, args)
+            all_results.n_rollouts[0] += eval_results.n_rollouts
+            all_results.per_timestep_losses[0] += eval_results.per_timestep_losses
+            all_results.total_returns[0] += eval_results.total_returns
+            all_results.success_rate[0] += eval_results.success_rate
+            all_results.reach_rate[0] += eval_results.reach_rate
+            all_results.avg_steps_to_reach[0] += eval_results.avg_steps_to_reach
+
+            sm.reset_partial_handle()
+
+        # Calculate mean
+        n_iters = float(n_iters)
+        all_results = EvalResults(
+            all_results.n_rollouts[0],
+            all_results.per_timestep_losses[0] / n_iters,
+            all_results.total_returns[0] / n_iters,
+            all_results.success_rate[0] / n_iters,
+            all_results.reach_rate[0] / n_iters,
+            all_results.avg_steps_to_reach[0] / n_iters)
+
+    pprint.pprint(all_results)
+
+    log_f.close()
 
 
 def train(args):
@@ -274,6 +337,7 @@ def train(args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
 
+    p.add_argument("--mode", choices=["train", "eval"], default="train")
     p.add_argument("--task_type", choices=["navigation", "communication"],
                    default="communication")
 
@@ -314,4 +378,8 @@ if __name__ == "__main__":
     p.add_argument("--emb_path")
 
     args = p.parse_args()
-    train(args)
+
+    if args.mode == "train":
+        train(args)
+    elif args.mode == "eval":
+        run_eval(args)
