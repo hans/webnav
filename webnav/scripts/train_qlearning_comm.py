@@ -50,10 +50,12 @@ def eval(model, envs, sv, sm, log_f, args):
 
     # Per-timestep loss accumulator.
     per_timestep_losses = np.zeros((args.path_length,))
-    total_returns, success_rate = 0.0, 0.0
+    total_returns, success_rate, reach_rate = 0.0, 0.0, 0.0
+    avg_steps_to_reach = 0.0
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
         actions, rewards, masks = [], [], []
+        reached_target = np.zeros((len(envs),))
 
         # Draw a random batch element to track for this batch.
         sample_idx = np.random.choice(len(envs))
@@ -64,6 +66,11 @@ def eval(model, envs, sv, sm, log_f, args):
         for iter_info in rollout(model, envs, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t, masks_t = \
                     iter_info
+
+            # Track which examples have reached target.
+            for j, env in enumerate(webnav_envs):
+                if env._navigator._on_target:
+                    reached_target[j] = min(reached_target[j], t)
 
             # Set up to track a trajectory of a single batch element.
             if t == 0:
@@ -107,6 +114,12 @@ def eval(model, envs, sv, sm, log_f, args):
                      for webnav_env in webnav_envs]
         success_rate += np.asarray(successes).mean()
 
+        # # of steps required to reach target, for those rollouts which did
+        reached_steps = np.nonzero(reached_target)[0]
+        reach_rate += len(reached_steps) / float(len(envs))
+        if len(reached_steps) > 0:
+            avg_steps_to_reach += np.asscalar(reached_steps.mean())
+
         # Accumulate.
         per_timestep_losses += losses_i
         total_returns += np.asarray(rewards).sum(axis=0).mean()
@@ -118,12 +131,16 @@ def eval(model, envs, sv, sm, log_f, args):
     per_timestep_losses /= float(args.n_eval_iters)
     total_returns /= float(args.n_eval_iters)
     success_rate /= float(args.n_eval_iters)
+    reach_rate /= float(args.n_eval_iters)
+    avg_steps_to_reach /= float(args.n_eval_iters)
 
     ##############
 
     loss = per_timestep_losses.mean()
     tqdm.write("Validation loss: %.10f" % loss, log_f)
     tqdm.write("Success rate: %.5f%%" % (success_rate * 100.0), log_f)
+    tqdm.write("Reach rate: %.5f%%" % (reach_rate * 100.0), log_f)
+    tqdm.write("Mean steps to reach: %.3f" % avg_steps_to_reach, log_f)
     tqdm.write("Mean undiscounted returns: %f" % total_returns, log_f)
 
     tqdm.write("Per-timestep validation losses:\n%s\n"
@@ -140,6 +157,9 @@ def eval(model, envs, sv, sm, log_f, args):
     summary.value.add(tag="eval/loss", simple_value=np.asscalar(loss))
     summary.value.add(tag="eval/success_rate",
                       simple_value=np.asscalar(success_rate))
+    summary.value.add(tag="eval/reach_rate", simple_value=reach_rate)
+    summary.value.add(tag="eval/mean_steps_to_reach",
+                      simple_value=avg_steps_to_reach)
     summary.value.add(tag="eval/mean_reward",
                       simple_value=np.asscalar(total_returns))
     for t, loss_t in enumerate(per_timestep_losses):
