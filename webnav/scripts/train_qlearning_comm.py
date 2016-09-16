@@ -261,6 +261,9 @@ def train(args):
                               for t, actions_t in enumerate(actions)})
                 _, summary, loss = sm.run(fetches, feeds)
 
+                if not np.isfinite(loss):
+                    raise RuntimeError("NaN loss -- quitting")
+
                 sm.reset_partial_handle()
 
                 if do_summary:
