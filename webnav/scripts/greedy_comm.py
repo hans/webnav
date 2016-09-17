@@ -25,7 +25,7 @@ def rollout(env, args, beta=1.0):
     steps_to_target = None
 
     for t in range(args.path_length):
-        (query, current_node, beam), message = observation
+        (query, current_node, beam), message_sent, message_recv = observation
 
         if navigator.cur_article_id == target:
             action = [action for action in range(args.beam_size)
@@ -56,6 +56,9 @@ if __name__ == "__main__":
     p.add_argument("--beam_size", default=10, type=int)
     p.add_argument("--n_rollouts", default=1000, type=int)
 
+    p.add_argument("--goal_reward", default=10, type=float)
+    p.add_argument("--match_reward", default=2.0, type=float)
+
     p.add_argument("--logdir", default="/tmp/webnav_q_comm")
 
     p.add_argument("--data_type", choices=["wikinav", "wikispeedia"],
@@ -66,6 +69,7 @@ if __name__ == "__main__":
 
     args = p.parse_args()
     args.batch_size = 1
+    args.task_type = "communication"
 
     graph, envs, eval_envs = build_webnav_conversation_envs(args)
     log_f = sys.stdout
