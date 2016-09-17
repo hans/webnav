@@ -160,8 +160,7 @@ def load_article(data_dir, title, category_ids, lead_text_num_tokens):
 
     tokens = tokens[:lead_text_num_tokens]
 
-    print title.split("_")
-    cleaned_name = clean_tokens(title.split("_"))
+    cleaned_name = clean_tokens(decode_name(title).split("_"))
     return Article(title, tokens, cleaned_name, category_ids)
 
 
