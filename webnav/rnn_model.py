@@ -102,7 +102,8 @@ def comm_scores(scores, state, agent, name="communication"):
     """
     with tf.op_scope([scores, state], name):
         # Batch norm the Q-scores coming from the navigation model.
-        scores = layers.batch_norm(scores)
+        scores = layers.batch_norm(scores, scope="scores_bn",
+                                   reuse=tf.get_variable_scope()._reuse)
 
         comm_state = tf.concat(1, (scores, state))
         comm_actions = agent.vocab_size + 1
