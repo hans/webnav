@@ -24,7 +24,8 @@ def decode_name(name):
 Wikispeedia = namedtuple("Wikispeedia", ["articles", "categories",
                                          "category_articles", "links",
                                          "paths"])
-Article = namedtuple("Article", ["name", "lead_tokens", "categories"])
+Article = namedtuple("Article", ["name", "lead_tokens", "cleaned_name",
+                                 "categories"])
 Path = namedtuple("Path", ["duration", "articles", "has_backtrack"])
 
 
@@ -136,6 +137,11 @@ stopwords.update(['.', ',', '"', "'", '?', '!', ':', ';', '(', ')', '[', ']', '{
 stopwords.update(["'s", "''", "``"])
 stopwords.update(["also", "much", "very"])
 
+def clean_tokens(tokens):
+    tokens = [token.lower() for token in tokens]
+    return [token for token in tokens
+            if token not in stopwords and not number_re.match(token)]
+
 def load_article(data_dir, title, category_ids, lead_text_num_tokens):
     path = os.path.join(data_dir, "plaintext_articles", title + ".txt")
     with codecs.open(os.path.join(path), "r", encoding="utf-8") as article_f:
@@ -150,20 +156,22 @@ def load_article(data_dir, title, category_ids, lead_text_num_tokens):
                 continue
 
             match_tokens = nltk.word_tokenize(match)
-            tokens.extend([token.lower() for token in match_tokens
-                           if token.lower() not in stopwords
-                              and not number_re.match(token)])
+            tokens.extend(clean_tokens(match_tokens))
 
     tokens = tokens[:lead_text_num_tokens]
 
-    return Article(title, tokens, category_ids)
+    print title.split("_")
+    cleaned_name = clean_tokens(title.split("_"))
+    return Article(title, tokens, cleaned_name, category_ids)
 
 
-def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab):
+def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab,
+                            use_title=False):
     vocab = vocab_cls()
     articles = wikispeedia_data["articles"]
     for article in articles:
-        vocab.update(article["lead_tokens"])
+        tokens = article["cleaned_name"] if use_title else article["lead_tokens"]
+        vocab.update(tokens)
     print "loading embeddings"
     E = vocab.get_embeddings()
     print "done"
@@ -171,12 +179,10 @@ def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab):
     article_embeddings = np.empty((len(articles), E.shape[1]))
     for i, article in enumerate(articles):
         n, embedding = 0, np.zeros((E.shape[1]))
-        for token in article["lead_tokens"]:
+        tokens = article["cleaned_name"] if use_title else article["lead_tokens"]
+        for token in tokens:
             if token in vocab:
                 embedding += E[vocab[token]]
-                n += 1
-            elif token.lower() in vocab:
-                embedding += E[vocab[token.lower()]]
                 n += 1
         article_embeddings[i] = embedding / float(n)
 
