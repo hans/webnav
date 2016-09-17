@@ -325,6 +325,7 @@ if __name__ == "__main__":
 
     p.add_argument("--gamma", default=0.99, type=float)
     p.add_argument("--epsilon", default=0.1, type=float)
+    p.add_argument("--rnn_keep_prob", default=0.9, type=float)
     p.add_argument("--goal_reward", default=10, type=float)
     p.add_argument("--match_reward", default=1, type=float)
 

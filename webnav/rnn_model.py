@@ -28,7 +28,7 @@ def score_beam(state, candidates):
 
 
 def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
-              name="model"):
+              keep_prob=1.0, is_training=True, name="model"):
     with tf.variable_scope(name):
         # Embedding of current articles (pre-computed)
         current_nodes = [tf.placeholder(tf.float32,
@@ -48,6 +48,11 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
 
         if cells is None:
             cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
+        if keep_prob < 1.0:
+            # Dropout on RNN cell outputs
+            cells = [tf.nn.rnn_cell.DropoutWrapper(
+                        cell, output_keep_prob=keep_prob)
+                     for cell in cells]
 
         # Run stacked RNN.
         inputs = [tf.concat(1, [current_nodes_t, query])
@@ -68,7 +73,7 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
 
             hid_vals.append(hid_t)
 
-            # Use top hidden layer to calculate scores.
+            # Use dropout-masked top hidden layer to compute scores.
             last_out = inp
             if cells[-1].output_size != embedding_dim:
                 last_out = layers.fully_connected(last_out,
@@ -109,7 +114,7 @@ def comm_scores(scores, state, agent, name="communication"):
 
 
 def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
-                   cells=None, name="model"):
+                   cells=None, keep_prob=1.0, is_training=True, name="model"):
     with tf.variable_scope(name):
         # Embedding of current articles (pre-computed)
         current_nodes = [tf.placeholder(tf.float32,
@@ -142,6 +147,10 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
 
         if cells is None:
             cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
+        if keep_prob < 1.0:
+            cells = [tf.nn.rnn_cell.DropoutWrapper(
+                        cell, output_keep_prob=keep_prob)
+                     for cell in cells]
 
         # Project messages into embedding space.
         # NB: Will fail for large vocabulary sizes.
@@ -285,10 +294,11 @@ def q_learn(scores, num_timesteps, sarsa=False, gamma=0.99):
 
 class Model(object):
     def __init__(self, beam_size, environment, path_length, embedding_dim,
-                 gamma=0.99):
+                 keep_prob=1.0, gamma=0.99):
         self.beam_size = beam_size
         self.path_length = path_length
         self.embedding_dim = embedding_dim
+        self.keep_prob = keep_prob
         self.gamma = gamma
 
         self.env = environment
@@ -311,7 +321,8 @@ class Model(object):
             env: Representative environment instance
         """
         return cls(args.beam_size, env, args.path_length,
-                   env.embedding_dim, args.gamma,
+                   env.embedding_dim, gamma=args.gamma,
+                   keep_prob=args.rnn_keep_prob,
                    sarsa=args.algorithm == "sarsa")
 
     def step(self, t, observations, masks_t):
@@ -352,7 +363,8 @@ class QNavigatorModel(Model):
 
         rnn_inputs, rnn_outputs = rnn_model(self.beam_size,
                                             self.path_length,
-                                            self.embedding_dim)
+                                            self.embedding_dim,
+                                            keep_prob=self.keep_prob)
 
         self.current_node, self.query, self.candidates = rnn_inputs
         self.scores, = rnn_outputs
@@ -441,7 +453,8 @@ class CommModel(Model):
         """
         webnav_env = env._env
         return cls(args.beam_size, env, args.path_length,
-                   webnav_env.embedding_dim, args.gamma,
+                   webnav_env.embedding_dim, gamma=args.gamma,
+                   keep_prob=args.rnn_keep_prob,
                    sarsa=args.algorithm == "sarsa")
 
 
@@ -453,7 +466,8 @@ class QCommModel(CommModel):
 
         rnn_inputs, rnn_outputs = rnn_comm_model(self.beam_size, self.agent,
                                                  self.path_length,
-                                                 self.embedding_dim)
+                                                 self.embedding_dim,
+                                                 keep_prob=self.keep_prob)
 
         self.current_node, self.query, self.candidates, \
                 self.message_sent, self.message_recv = rnn_inputs
