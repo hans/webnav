@@ -67,6 +67,9 @@ class EmbeddedWebGraph(object):
         article2 = self.articles[article2_idx]
 
         article1_types = set(article1.text)
+        if len(article1_types) == 0:
+            return 0.0
+
         article2_types = set(article2.text)
         return len(article1_types & article2_types) / float(len(article1_types))
 
