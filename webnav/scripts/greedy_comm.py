@@ -27,7 +27,8 @@ def rollout(env, args, beta=1.0):
     for t in range(args.path_length):
         (query, current_node, beam), message_sent, message_recv = observation
 
-        if navigator.cur_article_id == target:
+        if navigator.cur_article_id == target \
+                or navigator.cur_article_id == graph.stop_sentinel:
             action = [action for action in range(args.beam_size)
                       if navigator._beam[action] == graph.stop_sentinel][0]
             steps_to_target = t
@@ -81,7 +82,7 @@ if __name__ == "__main__":
         if steps_to_target is not None:
             successes.append(steps_to_target)
 
-        # log_trajectory(traj, target, envs[0], log_f)
+        log_trajectory(traj, target, envs[0], log_f)
 
     print "Success: %f%%" % (len(successes) / float(n) * 100)
     print "Mean # steps to success: %f" % np.mean(successes)
