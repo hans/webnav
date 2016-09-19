@@ -73,8 +73,8 @@ def eval(model, envs, sv, sm, log_f, args):
         for iter_info in rollout(model, envs, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t, masks_t = \
                     iter_info
-            action_descriptions = [sample_env.describe_action(action)
-                                   for sample_env, action
+            action_descriptions = [env_.describe_action(action)
+                                   for env_, action
                                    in zip(envs, actions_t)]
 
             # Track which examples have reached target.
@@ -103,7 +103,8 @@ def eval(model, envs, sv, sm, log_f, args):
                         traj.append((action_type, data, reward))
 
                         recv_event = sample_env._events[-1]
-                        traj.append((RECEIVE, recv_event[-1], 0.0))
+                        assert recv_event[0] == RECEIVE
+                        traj.append((RECEIVE, recv_event[1], 0.0))
                     else:
                         traj.append((action_type, data, reward))
                 else:
