@@ -65,8 +65,13 @@ def load_raw_data(data_dir, lead_text_num_tokens=300):
             category_articles[category_id].append(article_id)
             article_categories[article_id].append(category_id)
 
-
-    articles = []
+    # Build in two sentinel articles at start of dataset
+    articles = [
+        Article(name="Stop", lead_tokens=[], cleaned_name=["Stop"],
+                categories=[]),
+        Article(name="Dummy", lead_tokens=[], cleaned_name=["Dummy"],
+                categories=[]),
+    ]
     for idx, title in enumerate(original_titles):
         articles.append(load_article(data_dir, title, article_categories[idx],
                                      lead_text_num_tokens))
@@ -175,15 +180,23 @@ def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab,
     E = vocab.get_embeddings()
     print "done"
 
-    article_embeddings = np.empty((len(articles), E.shape[1]))
+    embedding_dim = E.shape[1]
+    article_embeddings = np.empty((len(articles), embedding_dim))
     for i, article in enumerate(articles):
-        n, embedding = 0, np.zeros((E.shape[1]))
+        n, embedding = 0, np.zeros(embedding_dim)
         tokens = article["cleaned_name"] if use_title else article["lead_tokens"]
-        for token in tokens:
-            if token in vocab:
-                embedding += E[vocab[token]]
-                n += 1
-        article_embeddings[i] = embedding / float(n)
+
+        if not tokens:
+            # Use a random embedding. Should only apply for "stop" and "dummy"
+            # articles
+            article_embeddings[i] = np.random.normal(scale=0.15,
+                                                     size=embedding_dim)
+        else:
+            for token in tokens:
+                if token in vocab:
+                    embedding += E[vocab[token]]
+                    n += 1
+            article_embeddings[i] = embedding / float(n)
 
     return article_embeddings
 

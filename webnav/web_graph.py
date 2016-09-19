@@ -175,10 +175,9 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
                         set(token.lower() for token in article["lead_tokens"]))
                     for i, article in enumerate(data["articles"])]
 
-        # Use a random article as a stop sentinel.
-        # TODO: Probably better to make a dedicated sentinel here, since this
-        # graph is relatively small
-        stop_sentinel = np.random.choice(len(articles))
+        assert articles[0].title == "Stop"
+        assert articles[1].title == "Dummy"
+        stop_sentinel = 0
 
         datasets = {}
         for dataset_name, dataset in data["paths"].iteritems():
@@ -227,13 +226,9 @@ class Navigator(object):
         self.beam_size = beam_size
         self.path_length = path_length
 
-        # Hack: use a random page as a dummy page which will fill up beams
-        # which are too small.
-        # Works in expectation. :)
-        self._dummy_page = np.random.choice(len(self.graph.articles))
-
-        assert self._dummy_page != self.graph.stop_sentinel, \
-                "A very improbable event has occurred. Please restart."
+        assert self.graph.articles[1].title == "Dummy", \
+                "Graph must have articles[1] == dummy article"
+        self._dummy_page = 1
 
         self._id, self._path, self._length = None, None, None
         self._beam = None
