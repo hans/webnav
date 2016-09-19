@@ -362,11 +362,11 @@ if __name__ == "__main__":
 
     p.add_argument("--data_type", choices=["wikinav", "wikispeedia"],
                    default="wikinav")
-    p.add_argument("--wiki_path", required=True)
+    p.add_argument("--wiki_path")
     p.add_argument("--qp_path")
     p.add_argument("--emb_path")
 
-    args = p.parse_args()
+    args = util.parse_args_with_file_defaults(p, {"logdir"})
 
     if args.mode == "train":
         train(args)

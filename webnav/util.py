@@ -1,3 +1,5 @@
+import argparse
+
 import numpy as np
 import scipy.signal
 import tensorflow as tf
@@ -194,3 +196,21 @@ def prepare_session_helpers(args, partial_fetches, partial_feeds,
                              session_manager=sm, summary_op=None)
 
     return sm, sv, session_config
+
+
+def parse_args_with_file_defaults(parser, ignore_file_args=None):
+    ignore_file_args = ignore_file_args or []
+
+    # First parse out a possible file directive
+    fparser = argparse.ArgumentParser()
+    fparser.add_argument("--config", nargs="?", type=argparse.FileType("r"))
+    fargs, remaining_args = fparser.parse_known_args()
+
+    ns = argparse.Namespace()
+    if fargs.config:
+        fconfig = eval(fargs.config.read())
+        for key, val in fconfig.iteritems():
+            if key not in ignore_file_args:
+                setattr(ns, key, val)
+
+    return parser.parse_args(remaining_args, ns)
