@@ -4,7 +4,7 @@ Train a web navigation agent purely via Q-learning RL.
 
 
 import argparse
-from collections import namedtuple
+from collections import namedtuple, Counter
 from functools import partial
 import os
 import pprint
@@ -26,7 +26,8 @@ from webnav.util import rollout
 EvalResults = namedtuple("EvalResults", ["n_rollouts",
                                          "per_timestep_losses", "total_returns",
                                          "success_rate", "reach_rate",
-                                         "avg_steps_to_reach"])
+                                         "avg_steps_to_reach",
+                                         "action_type_counts"])
 
 
 def eval(model, envs, sv, sm, log_f, args):
@@ -53,9 +54,10 @@ def eval(model, envs, sv, sm, log_f, args):
     trajectories, targets = [], []
     losses = []
 
-    # Per-timestep loss accumulator.
+    # Eval info accumulators.
     per_timestep_losses = np.zeros((args.path_length,))
     total_returns, success_rate, reach_rate = 0.0, 0.0, 0.0
+    action_type_counter = Counter()
     avg_steps_to_reach = 0.0
 
     for i in trange(args.n_eval_iters, desc="evaluating", leave=True):
@@ -71,6 +73,9 @@ def eval(model, envs, sv, sm, log_f, args):
         for iter_info in rollout(model, envs, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t, masks_t = \
                     iter_info
+            action_descriptions = [sample_env.describe_action(action)
+                                   for sample_env, action
+                                   in zip(envs, actions_t)]
 
             # Track which examples have reached target.
             for j, env in enumerate(webnav_envs):
@@ -89,7 +94,7 @@ def eval(model, envs, sv, sm, log_f, args):
                 reward = rewards_t[sample_idx]
 
                 if args.task_type == "communication":
-                    action_type, data = sample_env.describe_action(action)
+                    action_type, data = action_descriptions[sample_idx]
                     if action_type == WRAPPED:
                         traj.append((WRAPPED,
                                     (data, sample_env._env.cur_article_id),
@@ -107,11 +112,14 @@ def eval(model, envs, sv, sm, log_f, args):
                                   webnav_envs[sample_idx].cur_article_id),
                                  reward))
 
+            # Update general accumulators.
             rewards_t = np.asarray(rewards_t)
             masks_t = np.asarray(masks_t)
             actions.append(actions_t)
             rewards.append(rewards_t * masks_t)
             masks.append(masks_t)
+            action_type_counter.update(
+                    action_desc[0] for action_desc in action_descriptions)
 
         losses_i = np.asarray(model.get_losses(actions, rewards, masks))
 
@@ -138,6 +146,10 @@ def eval(model, envs, sv, sm, log_f, args):
     success_rate /= float(args.n_eval_iters)
     reach_rate /= float(args.n_eval_iters)
     avg_steps_to_reach /= float(args.n_eval_iters)
+    action_type_counter = {
+            action: count / float(args.n_eval_iters) / float(len(envs))
+            for action, count in action_type_counter.iteritems()
+    }
 
     ##############
 
@@ -167,6 +179,9 @@ def eval(model, envs, sv, sm, log_f, args):
                       simple_value=avg_steps_to_reach)
     summary.value.add(tag="eval/mean_reward",
                       simple_value=np.asscalar(total_returns))
+    for action_type, count in action_type_counter.iteritems():
+        summary.value.add(tag="eval/action/%i" % action_type,
+                          simple_value=count)
     for t, loss_t in enumerate(per_timestep_losses):
         summary.value.add(tag="eval/loss_t%i" % t,
                           simple_value=np.asscalar(loss_t))
@@ -178,7 +193,8 @@ def eval(model, envs, sv, sm, log_f, args):
                        total_returns=total_returns,
                        success_rate=success_rate,
                        reach_rate=reach_rate,
-                       avg_steps_to_reach=avg_steps_to_reach)
+                       avg_steps_to_reach=avg_steps_to_reach,
+                       action_type_counts=action_type_counter)
 
 
 def build_core(args):
