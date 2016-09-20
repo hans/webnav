@@ -73,9 +73,13 @@ def eval(model, envs, sv, sm, log_f, args):
         for iter_info in rollout(model, envs, args, epsilon=0):
             t, observations, _, actions_t, rewards_t, dones_t, masks_t = \
                     iter_info
-            action_descriptions = [env_.describe_action(action)
-                                   for env_, action
-                                   in zip(envs, actions_t)]
+
+            if args.task_type == "communication":
+                action_descriptions = [env_.describe_action(action)
+                                       for env_, action
+                                       in zip(envs, actions_t)]
+                action_type_counter.update(
+                        action_desc[0] for action_desc in action_descriptions)
 
             # Track which examples have reached target.
             for j, env in enumerate(webnav_envs):
@@ -119,8 +123,6 @@ def eval(model, envs, sv, sm, log_f, args):
             actions.append(actions_t)
             rewards.append(rewards_t * masks_t)
             masks.append(masks_t)
-            action_type_counter.update(
-                    action_desc[0] for action_desc in action_descriptions)
 
         losses_i = np.asarray(model.get_losses(actions, rewards, masks))
 
@@ -206,7 +208,7 @@ def build_core(args):
     elif args.task_type == "navigation":
         graph, envs, eval_envs = util.build_webnav_envs(args)
         model = rnn_model.QNavigatorModel.build(args, envs[0])
-        oracle_model = model
+        oracle_model = None
 
     return graph, envs, eval_envs, model, oracle_model
 
@@ -288,7 +290,8 @@ def train(args):
                     log_f.flush()
 
                 # Sample a model for rollouts.
-                is_oracle = np.random.random() < args.oracle_freq
+                is_oracle = oracle_model is not None and \
+                        np.random.random() < args.oracle_freq
                 epsilon = 0.0 if is_oracle else args.epsilon
                 active_q_fn = oracle_model if is_oracle else None
 
