@@ -244,11 +244,14 @@ def train(args):
 
     opt = tf.train.MomentumOptimizer(learning_rate, 0.9)
     train_op_ = opt.minimize(model.loss, global_step=global_step)
+    # Also prepare non-training updates (e.g. batch-norm updates).
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    update_op = tf.group(*update_ops)
     # Build a `train_op` Tensor which depends on the actual train op target.
     # This is a hack to get around the current design of partial_run, which
     # does not support targets as fetches.
     # https://github.com/tensorflow/tensorflow/issues/1899
-    with tf.control_dependencies([train_op_]):
+    with tf.control_dependencies([train_op_, update_op]):
         train_op = tf.constant(0., name="train_op")
 
     summary_op = tf.merge_all_summaries()
