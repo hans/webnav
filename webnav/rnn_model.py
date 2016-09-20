@@ -9,9 +9,79 @@ import numpy as np
 from rllab.misc.overrides import overrides
 import tensorflow as tf
 from tensorflow.contrib.layers import layers
+from tensorflow.contrib.layers import utils as layers_utils
 
+from webnav import util
 from webnav.agents.oracle import OracleAgent, WebNavMaxOverlapAgent
-from webnav.util import make_cell_zero_state, make_cell_state_placeholder
+
+
+class DropoutWrapper(tf.nn.rnn_cell.RNNCell):
+
+    """
+    A customized RNNCell dropout wrapper that supports tensor `is_training`
+    flag.
+    """
+
+    def __init__(self, cell, input_keep_prob=1.0, output_keep_prob=1.0,
+                 is_training=True, seed=None):
+        """Create a cell with added input and/or output dropout.
+        Dropout is never used on the state.
+        Args:
+        cell: an RNNCell, a projection to output_size is added to it.
+        input_keep_prob: unit Tensor or float between 0 and 1, input keep
+            probability; if it is float and 1, no input dropout will be added.
+        output_keep_prob: unit Tensor or float between 0 and 1, output keep
+            probability; if it is float and 1, no output dropout will be added.
+        seed: (optional) integer, the randomness seed.
+        Raises:
+        TypeError: if cell is not an RNNCell.
+        ValueError: if keep_prob is not between 0 and 1.
+        """
+        if not isinstance(cell, tf.nn.rnn_cell.RNNCell):
+            raise TypeError("The parameter cell is not a RNNCell.")
+        if (isinstance(input_keep_prob, float) and
+            not (input_keep_prob >= 0.0 and input_keep_prob <= 1.0)):
+            raise ValueError("Parameter input_keep_prob must be between 0 and 1: %d"
+                             % input_keep_prob)
+        if (isinstance(output_keep_prob, float) and
+            not (output_keep_prob >= 0.0 and output_keep_prob <= 1.0)):
+            raise ValueError("Parameter output_keep_prob must be between 0 and 1: %d"
+                              % output_keep_prob)
+        self._cell = cell
+        self._input_keep_prob = input_keep_prob
+        self._output_keep_prob = output_keep_prob
+        self._seed = seed
+        self._is_training = is_training
+
+    @property
+    def state_size(self):
+        return self._cell.state_size
+
+    @property
+    def output_size(self):
+        return self._cell.output_size
+
+    def __call__(self, inputs, state, scope=None):
+        """Run the cell with the declared dropouts."""
+        dropped_inputs = inputs
+        if (not isinstance(self._input_keep_prob, float) or
+            self._input_keep_prob < 1):
+            dropped_inputs = tf.nn.dropout(inputs, self._input_keep_prob,
+                                           seed=self._seed)
+
+        inputs = layers_utils.smart_cond(self._is_training,
+                lambda: dropped_inputs, lambda: inputs)
+        output, new_state = self._cell(inputs, state, scope)
+
+        dropped_output = output
+        if (not isinstance(self._output_keep_prob, float) or
+            self._output_keep_prob < 1):
+            dropped_output = tf.nn.dropout(output, self._output_keep_prob,
+                                           seed=self._seed)
+
+        output = layers_utils.smart_cond(self._is_training,
+                lambda: dropped_output, lambda: output)
+        return output, new_state
 
 
 def score_beam(state, candidates):
@@ -50,8 +120,8 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
             cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
         if keep_prob < 1.0:
             # Dropout on RNN cell outputs
-            cells = [tf.nn.rnn_cell.DropoutWrapper(
-                        cell, output_keep_prob=keep_prob)
+            cells = [DropoutWrapper(cell, is_training=is_training,
+                                    output_keep_prob=keep_prob)
                      for cell in cells]
 
         # Run stacked RNN.
@@ -95,7 +165,7 @@ def rnn_model(beam_size, num_timesteps, embedding_dim, inputs=None, cells=None,
         return inputs, outputs
 
 
-def comm_scores(scores, state, agent, name="communication"):
+def comm_scores(scores, state, agent, is_training=True, name="communication"):
     """
     Predict scores for communcation actions given wrapped environment actions
     and agent hidden state.
@@ -103,6 +173,7 @@ def comm_scores(scores, state, agent, name="communication"):
     with tf.op_scope([scores, state], name):
         # Batch norm the Q-scores coming from the navigation model.
         scores = layers.batch_norm(scores, scope="scores_bn",
+                                   is_training=is_training,
                                    reuse=tf.get_variable_scope()._reuse)
 
         comm_state = tf.concat(1, (scores, state))
@@ -149,8 +220,8 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
         if cells is None:
             cells = [tf.nn.rnn_cell.BasicLSTMCell(1024, state_is_tuple=True)]
         if keep_prob < 1.0:
-            cells = [tf.nn.rnn_cell.DropoutWrapper(
-                        cell, output_keep_prob=keep_prob)
+            cells = [DropoutWrapper(cell, is_training=is_training,
+                                    output_keep_prob=keep_prob)
                      for cell in cells]
 
         # Project messages into embedding space.
@@ -198,7 +269,8 @@ def rnn_comm_model(beam_size, agent, num_timesteps, embedding_dim, inputs=None,
                     beam_size, activation_fn=None,
                     scope="position_aware_score_delta")
 
-            comm_scores_t = comm_scores(scores_t, last_out, agent)
+            comm_scores_t = comm_scores(scores_t, last_out, agent,
+                                        is_training=is_training)
 
             scores_t = tf.concat(1, [scores_t, comm_scores_t])
 
@@ -301,6 +373,7 @@ class Model(object):
         self.embedding_dim = embedding_dim
         self.keep_prob = keep_prob
         self.gamma = gamma
+        self.is_training = tf.placeholder(tf.bool, shape=(), name="is_training")
 
         self.env = environment
 
@@ -365,6 +438,7 @@ class QNavigatorModel(Model):
         rnn_inputs, rnn_outputs = rnn_model(self.beam_size,
                                             self.path_length,
                                             self.embedding_dim,
+                                            is_training=self.is_training,
                                             keep_prob=self.keep_prob)
 
         self.current_node, self.query, self.candidates = rnn_inputs
@@ -468,6 +542,7 @@ class QCommModel(CommModel):
         rnn_inputs, rnn_outputs = rnn_comm_model(self.beam_size, self.agent,
                                                  self.path_length,
                                                  self.embedding_dim,
+                                                 is_training=self.is_training,
                                                  keep_prob=self.keep_prob)
 
         self.current_node, self.query, self.candidates, \
