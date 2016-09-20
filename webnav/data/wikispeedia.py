@@ -1,5 +1,6 @@
 import codecs
 from collections import defaultdict, namedtuple
+import copy
 import os
 import re
 import random
@@ -24,9 +25,22 @@ def decode_name(name):
 Wikispeedia = namedtuple("Wikispeedia", ["articles", "categories",
                                          "category_articles", "links",
                                          "paths"])
-Article = namedtuple("Article", ["name", "lead_tokens", "cleaned_name",
-                                 "categories"])
+
+_Article = namedtuple("Article", ["name", "lead_tokens", "cleaned_name",
+                                  "categories", "is_fixed"])
+def Article(name, lead_tokens, cleaned_name, categories, is_fixed=False):
+    return _Article(name, lead_tokens, cleaned_name, categories, is_fixed)
+
 Path = namedtuple("Path", ["duration", "articles", "has_backtrack"])
+
+
+FIXED_ARTICLES = [
+    Article(name="Stop", lead_tokens=[], cleaned_name=["Stop"],
+            categories=[], is_fixed=True),
+    Article(name="Dummy", lead_tokens=[], cleaned_name=["Dummy"],
+            categories=[], is_fixed=True),
+]
+
 
 
 def load_raw_data(data_dir, lead_text_num_tokens=300):
@@ -41,9 +55,16 @@ def load_raw_data(data_dir, lead_text_num_tokens=300):
             line = decode_name(line)
             titles.append(line)
 
-    original_title2id = {original_title: idx for idx, original_title
-                         in enumerate(original_titles)}
-    title2id = {title: idx for idx, title in enumerate(titles)}
+    # Initialize title -> ID dicts with fixed / dummy articles
+    original_title2id = {fixed_article.name: idx for idx, fixed_article
+                         in enumerate(FIXED_ARTICLES)}
+    title2id = copy.copy(original_title2id)
+
+    # Now add data!
+    offset = len(FIXED_ARTICLES)
+    original_title2id.update({original_title: offset + idx for idx, original_title
+                              in enumerate(original_titles)})
+    title2id.update({title: offset + idx for idx, title in enumerate(titles)})
 
     categories = []
     category2id = {}
@@ -65,13 +86,8 @@ def load_raw_data(data_dir, lead_text_num_tokens=300):
             category_articles[category_id].append(article_id)
             article_categories[article_id].append(category_id)
 
-    # Build in two sentinel articles at start of dataset
-    articles = [
-        Article(name="Stop", lead_tokens=[], cleaned_name=["Stop"],
-                categories=[]),
-        Article(name="Dummy", lead_tokens=[], cleaned_name=["Dummy"],
-                categories=[]),
-    ]
+    # Build article collection: fixed + all processed from data
+    articles = FIXED_ARTICLES[:]
     for idx, title in enumerate(original_titles):
         articles.append(load_article(data_dir, title, article_categories[idx],
                                      lead_text_num_tokens))
@@ -186,7 +202,7 @@ def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab,
         n, embedding = 0, np.zeros(embedding_dim)
         tokens = article["cleaned_name"] if use_title else article["lead_tokens"]
 
-        if not tokens:
+        if article["is_fixed"]:
             # Use a random embedding. Should only apply for "stop" and "dummy"
             # articles
             article_embeddings[i] = np.random.normal(scale=0.15,
