@@ -35,9 +35,9 @@ Path = namedtuple("Path", ["duration", "articles", "has_backtrack"])
 
 
 FIXED_ARTICLES = [
-    Article(name="Stop", lead_tokens=[], cleaned_name=["Stop"],
+    Article(name="Stop", lead_tokens=[], cleaned_name=["stop"],
             categories=[], is_fixed=True),
-    Article(name="Dummy", lead_tokens=[], cleaned_name=["Dummy"],
+    Article(name="Dummy", lead_tokens=[], cleaned_name=["dummy"],
             categories=[], is_fixed=True),
 ]
 
@@ -87,10 +87,14 @@ def load_raw_data(data_dir, lead_text_num_tokens=300):
             article_categories[article_id].append(category_id)
 
     # Build article collection: fixed + all processed from data
-    articles = FIXED_ARTICLES[:]
-    for idx, title in enumerate(original_titles):
-        articles.append(load_article(data_dir, title, article_categories[idx],
-                                     lead_text_num_tokens))
+    articles = {idx: article for idx, article in enumerate(FIXED_ARTICLES)}
+    for title, idx in original_title2id.iteritems():
+        if idx < len(FIXED_ARTICLES):
+            continue
+        articles[idx] = load_article(data_dir, title, article_categories[idx],
+                                     lead_text_num_tokens)
+    # Convert to list
+    articles = [articles[idx] for idx in range(len(articles))]
 
     links = defaultdict(list)
     with open(os.path.join(data_dir, "links.tsv"), "r") as links_f:
