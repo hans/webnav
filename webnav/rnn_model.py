@@ -399,7 +399,7 @@ class Model(object):
                    keep_prob=args.rnn_keep_prob,
                    sarsa=args.algorithm == "sarsa")
 
-    def step(self, t, observations, masks_t):
+    def step(self, t, observations, masks_t, is_training):
         """
         Compute Q(s, *) for a batch of states.
 
@@ -455,14 +455,14 @@ class QNavigatorModel(Model):
     @overrides
     def all_feeds(self):
         return self.current_node + self.candidates + [self.query] + \
-                self.actions + self.rewards + self.masks
+                self.actions + self.rewards + self.masks + [self.is_training]
 
     @property
     @overrides
     def all_fetches(self):
         return self.scores + self.all_losses + [self.loss]
 
-    def _reset_batch(self, batch_size):
+    def _reset_batch(self, batch_size, is_training):
         """
         Allocate reusable
         """
@@ -473,12 +473,13 @@ class QNavigatorModel(Model):
         self._d_current_nodes = np.empty((batch_size, self.embedding_dim))
         self._d_candidates = np.empty((batch_size, self.beam_size,
                                        self.embedding_dim))
+        self._d_is_training = is_training
 
     @overrides
-    def step(self, t, observations, masks):
+    def step(self, t, observations, masks, is_training):
         batch_size = len(observations)
         if t == 0:
-            self._reset_batch(batch_size)
+            self._reset_batch(batch_size, is_training)
 
         for i, obs_i in enumerate(observations):
             query_i, current_node_i, beam_i = obs_i
@@ -494,6 +495,7 @@ class QNavigatorModel(Model):
         }
         if t == 0:
             feed[self.query] = self._d_query
+            feed[self.is_training] = self._d_is_training
 
         # Calculate action scores.
         scores_t = self.sm.run(self.scores[t], feed)
@@ -561,14 +563,14 @@ class QCommModel(CommModel):
     def all_feeds(self):
         return self.current_node + self.candidates + self.message_sent + \
                 self.message_recv + [self.query] + self.actions + self.rewards + \
-                self.masks
+                self.masks + [self.is_training]
 
     @property
     @overrides
     def all_fetches(self):
         return self.scores + self.all_losses + [self.loss]
 
-    def _reset_batch(self, batch_size):
+    def _reset_batch(self, batch_size, is_training):
         """
         Allocate reusable
         """
@@ -584,11 +586,13 @@ class QCommModel(CommModel):
         self._d_message_sent = np.zeros((batch_size, self.env.vocab_size))
         self._d_message_recv = np.empty((batch_size, self.env.vocab_size))
 
+        self._d_is_training = is_training
+
     @overrides
-    def step(self, t, observations, masks):
+    def step(self, t, observations, masks, is_training):
         batch_size = len(observations)
         if t == 0:
-            self._reset_batch(batch_size)
+            self._reset_batch(batch_size, is_training)
 
         for i, obs_i in enumerate(observations):
             nav_obs, message_recv, message_sent = obs_i
@@ -609,6 +613,7 @@ class QCommModel(CommModel):
         }
         if t == 0:
             feed[self.query] = self._d_query
+            feed[self.is_training] = self._d_is_training
 
         # Calculate action scores.
         scores_t = self.sm.run(self.scores[t], feed)
@@ -656,7 +661,7 @@ class OracleCommModel(CommModel):
         which_action = self.env._env.action_space.n + which_idx
         self._query_which[:, which_action] = 1
 
-    def step(self, t, observations, masks):
+    def step(self, t, observations, masks, is_training):
         if t == 0:
             self._reset_batch(len(observations))
 

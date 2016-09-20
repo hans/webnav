@@ -102,7 +102,7 @@ def log_trajectory(trajectory, target, env, log_f):
             break
 
 
-def rollout(q_fn, envs, args, epsilon=0.1, active_q_fn=None):
+def rollout(q_fn, envs, args, epsilon=0.1, is_training=True, active_q_fn=None):
     """
     Execute a batch of rollouts with the given Q function, on- or off-policy.
 
@@ -124,10 +124,11 @@ def rollout(q_fn, envs, args, epsilon=0.1, active_q_fn=None):
     masks_t = [1.0] * batch_size
 
     for t in range(args.path_length):
-        scores_t = q_fn.step(t, observations, masks_t)
+        scores_t = q_fn.step(t, observations, masks_t, is_training=is_training)
         if active_q_fn is not None:
             # Override Q-function scores.
-            scores_t = active_q_fn.step(t, observations, masks_t)
+            scores_t = active_q_fn.step(t, observations, masks_t,
+                                        is_training=is_training)
 
         # Epsilon-greedy sampling
         actions = scores_t.argmax(axis=1)
