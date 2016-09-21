@@ -178,8 +178,8 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
                         set(token.lower() for token in article["lead_tokens"]))
                     for i, article in enumerate(data["articles"])]
 
-        assert articles[0].title == "Stop"
-        assert articles[1].title == "Dummy"
+        assert articles[0].title == "_Stop"
+        assert articles[1].title == "_Dummy"
         stop_sentinel = 0
 
         datasets = {}
@@ -229,7 +229,7 @@ class Navigator(object):
         self.beam_size = beam_size
         self.path_length = path_length
 
-        assert self.graph.articles[1].title == "Dummy", \
+        assert self.graph.articles[1].title == "_Dummy", \
                 "Graph must have articles[1] == dummy article"
         self._dummy_page = 1
 
