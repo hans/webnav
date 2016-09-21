@@ -25,8 +25,11 @@ Wikispeedia = namedtuple("Wikispeedia", ["articles", "categories",
                                          "category_articles", "links",
                                          "paths"])
 Article = namedtuple("Article", ["name", "lead_tokens", "cleaned_name",
-                                 "categories"])
+                                 "categories", "is_dummy"])
 Path = namedtuple("Path", ["duration", "articles", "has_backtrack"])
+
+
+DUMMY_PAGES = ["_Stop", "_Dummy"]
 
 
 def load_raw_data(data_dir, lead_text_num_tokens=300):
@@ -44,6 +47,9 @@ def load_raw_data(data_dir, lead_text_num_tokens=300):
     original_title2id = {original_title: idx for idx, original_title
                          in enumerate(original_titles)}
     title2id = {title: idx for idx, title in enumerate(titles)}
+
+    for i, dummy_page_name in enumerate(DUMMY_PAGES):
+        assert title2id[dummy_page_name] == i
 
     categories = []
     category2id = {}
@@ -65,13 +71,8 @@ def load_raw_data(data_dir, lead_text_num_tokens=300):
             category_articles[category_id].append(article_id)
             article_categories[article_id].append(category_id)
 
-    # Build in two sentinel articles at start of dataset
-    articles = [
-        Article(name="Stop", lead_tokens=[], cleaned_name=["Stop"],
-                categories=[]),
-        Article(name="Dummy", lead_tokens=[], cleaned_name=["Dummy"],
-                categories=[]),
-    ]
+
+    articles = []
     for idx, title in enumerate(original_titles):
         articles.append(load_article(data_dir, title, article_categories[idx],
                                      lead_text_num_tokens))
@@ -148,6 +149,10 @@ def clean_tokens(tokens):
             if token not in stopwords and not number_re.match(token)]
 
 def load_article(data_dir, title, category_ids, lead_text_num_tokens):
+    if title in DUMMY_PAGES:
+        return Article(title, [], clean_tokens(title.split("_")), [],
+                       is_dummy=True)
+
     path = os.path.join(data_dir, "plaintext_articles", title + ".txt")
     with codecs.open(os.path.join(path), "r", encoding="utf-8") as article_f:
         match_iter = re.finditer(main_text_line, article_f.read())
@@ -166,7 +171,7 @@ def load_article(data_dir, title, category_ids, lead_text_num_tokens):
     tokens = tokens[:lead_text_num_tokens]
 
     cleaned_name = clean_tokens(decode_name(title).split("_"))
-    return Article(title, tokens, cleaned_name, category_ids)
+    return Article(title, tokens, cleaned_name, category_ids, False)
 
 
 def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab,
@@ -180,17 +185,15 @@ def make_article_embeddings(wikispeedia_data, vocab_cls=GloveVocab,
     E = vocab.get_embeddings()
     print "done"
 
-    embedding_dim = E.shape[1]
-    article_embeddings = np.empty((len(articles), embedding_dim))
+    article_embeddings = np.empty((len(articles), E.shape[1]))
     for i, article in enumerate(articles):
-        n, embedding = 0, np.zeros(embedding_dim)
+        n, embedding = 0, np.zeros((E.shape[1]))
         tokens = article["cleaned_name"] if use_title else article["lead_tokens"]
 
-        if not tokens:
-            # Use a random embedding. Should only apply for "stop" and "dummy"
-            # articles
+        if article["name"] in DUMMY_PAGES:
+            # Use a random embedding.
             article_embeddings[i] = np.random.normal(scale=0.15,
-                                                     size=embedding_dim)
+                                                     size=E.shape[1])
         else:
             for token in tokens:
                 if token in vocab:
