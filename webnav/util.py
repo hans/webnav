@@ -82,8 +82,10 @@ def log_trajectory(trajectory, target, env, log_f):
 
     tqdm.write("Trajectory: (target %s)"
                 % graph.get_article_title(target), log_f)
-    for action_type, data, reward in trajectory:
+    for action_type, data, tags in trajectory:
         stop = False
+        reward = tags.get("reward", 0.0)
+
         if action_type == WRAPPED:
             action_id, article_id = data
             desc = "%s (%i)" % (graph.get_article_title(article_id), action_id)
@@ -96,7 +98,13 @@ def log_trajectory(trajectory, target, env, log_f):
         elif action_type == SEND:
             desc = "SEND"
 
-        tqdm.write("\t%-40s\t%.5f" % (desc, reward), log_f)
+        desc_fmt = "\t%-40s\t%.5f"
+        if "nav_mean" in tags:
+            # Log moments of navigation distributions
+            desc_fmt = "\t%%-40s\t%%.5f\t\t%+.5f\t%+.5f" % \
+                    (tags["nav_mean"], tags["nav_var"])
+
+        tqdm.write(desc_fmt % (desc, reward), log_f)
 
         if stop:
             break

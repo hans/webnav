@@ -72,7 +72,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
         iter_info = rollout(model, envs, args, epsilon=0, is_training=False)
         for step_info in iter_info:
-            t, observations, _, actions_t, rewards_t, dones_t, masks_t = \
+            t, observations, scores_t, actions_t, rewards_t, dones_t, masks_t = \
                     step_info
 
             if args.task_type == "communication":
@@ -89,7 +89,7 @@ def eval(model, envs, sv, sm, log_f, args):
 
             # Set up to track a trajectory of a single batch element.
             if t == 0:
-                traj = [(WRAPPED, (0, sample_navigator._path[0]), 0.0)]
+                traj = [(WRAPPED, (0, sample_navigator._path[0]), {})]
                 targets.append(sample_navigator.target_id)
 
             # Track our single batch element.
@@ -98,25 +98,32 @@ def eval(model, envs, sv, sm, log_f, args):
                 action = actions_t[sample_idx]
                 reward = rewards_t[sample_idx]
 
+                # Calculate moments of navigation scores
+                nav_scores = scores_t[sample_idx, :webnav_envs[0].action_space.n]
+                nav_mean, nav_var = nav_scores.mean(), nav_scores.var()
+
+                # Values tagged onto any trajectory point
+                tags = dict(reward=reward, nav_mean=nav_mean, nav_var=nav_var)
+
                 if args.task_type == "communication":
                     action_type, data = action_descriptions[sample_idx]
                     if action_type == WRAPPED:
                         traj.append((WRAPPED,
                                     (data, sample_env._env.cur_article_id),
-                                    reward))
+                                    tags))
                     elif action_type == SEND:
-                        traj.append((action_type, data, reward))
+                        traj.append((action_type, data, tags))
 
                         recv_event = sample_env._events[-1]
                         assert recv_event[0] == RECEIVE
-                        traj.append((RECEIVE, recv_event[1], 0.0))
+                        traj.append((RECEIVE, recv_event[1], {"reward": 0.0}))
                     else:
-                        traj.append((action_type, data, reward))
+                        traj.append((action_type, data, tags))
                 else:
                     traj.append((WRAPPED,
                                  (action,
                                   webnav_envs[sample_idx].cur_article_id),
-                                 reward))
+                                 tags))
 
             # Update general accumulators.
             rewards_t = np.asarray(rewards_t)
