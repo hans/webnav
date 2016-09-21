@@ -58,16 +58,20 @@ def build_webnav_conversation_envs(args):
     """
     graph, webnav_envs, webnav_eval_envs = build_webnav_envs(args)
 
+    allow_cycle = args.agent_type == "cycling_oracle"
+
     # Wrap core environment in conversation environment.
     # TODO maybe don't need to replicate agents?
     envs = [SituatedConversationEnvironment(
                 env,
-                oracle.WebNavEmbeddingAgent(env, match_reward=args.match_reward),
+                oracle.WebNavEmbeddingAgent(env, match_reward=args.match_reward,
+                                            allow_cycle=allow_cycle),
                 include_utterance_in_observation=True)
             for env in webnav_envs]
     eval_envs = [SituatedConversationEnvironment(
                     env,
-                    oracle.WebNavEmbeddingAgent(env, match_reward=args.match_reward),
+                    oracle.WebNavEmbeddingAgent(env, match_reward=args.match_reward,
+                                                allow_cycle=allow_cycle),
                     include_utterance_in_observation=True)
                  for env in webnav_eval_envs]
 

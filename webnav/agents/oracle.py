@@ -8,15 +8,18 @@ class OracleAgent(Agent):
     """
     An agent which responds to queries with explicit action indices.
     """
-    def __init__(self, env, match_reward=2.0):
+    def __init__(self, env, match_reward=2.0, allow_cycle=False):
         self.env = env
         self.beam_size = env.beam_size
         self.path_length = env.path_length
         self.match_reward = match_reward
+        self.allow_cycle = allow_cycle
 
         # For now, vocab = set of valid messages
         # (all messages are 1 token long)
         self._valid_receive = ["which"]
+        if allow_cycle:
+            self._valid_receive.append("cycle")
         self._valid_send = [str(x) for x in range(self.beam_size)]
         self._vocab = self._valid_receive + self._valid_send
 
@@ -86,6 +89,12 @@ class WebNavEmbeddingAgent(OracleAgent):
             action = scores.argmax()
 
             response = str(action)
+        elif self.allow_cycle and message_str.startswith("cycle"):
+            matched = True
+
+            # Sample new candidates for the beam.
+            # HACK: formalize this and don't use private method
+            env._navigator._prepare()
 
         if matched:
             reward += self.match_reward

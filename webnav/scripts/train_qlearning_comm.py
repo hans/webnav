@@ -343,6 +343,8 @@ if __name__ == "__main__":
     p.add_argument("--mode", choices=["train", "eval"], default="train")
     p.add_argument("--task_type", choices=["navigation", "communication"],
                    default="communication")
+    p.add_argument("--agent_type", choices=["oracle", "cycling_oracle"],
+                   default="oracle")
 
     p.add_argument("--path_length", default=3, type=int)
     p.add_argument("--beam_size", default=10, type=int)

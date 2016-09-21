@@ -632,7 +632,7 @@ class QCommModel(CommModel):
 class OracleCommModel(CommModel):
 
     """
-    An oracle model for operating with the WebNavMaxOverlapAgent.
+    A greedy model for operating with an oracle agent.
     """
 
     # FSM states
@@ -646,6 +646,8 @@ class OracleCommModel(CommModel):
 
         assert isinstance(self.agent, OracleAgent)
         self.sm = None
+
+        self.cycle_probability = 0.25 if self.agent.allow_cycle else 0
 
     def _reset_batch(self, batch_size):
         self._state = self.QUERY
@@ -661,16 +663,20 @@ class OracleCommModel(CommModel):
         which_action = self.env._env.action_space.n + which_idx
         self._query_which[:, which_action] = 1
 
+        # Prepare score return when we want to utter "cycle"
+        self._query_cycle = np.zeros((batch_size, self.env.action_space.n))
+        cycle_idx = self.agent._token2idx["cycle"]
+        cycle_action = self.env._env.action_space.n + cycle_idx
+        self._query_cycle[:, cycle_action] = 1
+
     def step(self, t, observations, masks, is_training):
         if t == 0:
             self._reset_batch(len(observations))
 
-        if self._state == self.SEND:
-            assert t % 3 == 1
-            self._state = self.RECEIVE
+        if isinstance(self._state, tuple) and self._state[0] == self.SEND:
+            self._state = self._state[1]
             return self._send_query
         elif self._state == self.RECEIVE:
-            assert t % 3 == 2
             # Read the response from agent.
             messages = [obs_i[1].nonzero()[0][0] for obs_i in observations]
             action_idxs = np.asarray([int(self.agent.vocab[idx])
@@ -682,13 +688,15 @@ class OracleCommModel(CommModel):
             self._state = self.QUERY
             return scores
         elif self._state == self.QUERY:
-            assert t % 3 == 0
-            # Send "which" query
-            which_idx = self.agent._token2idx["which"]
-            which_action = self.env._env.action_space.n + which_idx
+            # With some probability, cycle the elements on the beam instead
+            do_cycle = np.random.random() < self.cycle_probability
 
-            self._state = self.SEND
-            return self._query_which
+            if do_cycle:
+                self._state = (self.SEND, self.QUERY)
+                return self._query_cycle
+            else:
+                self._state = (self.SEND, self.RECEIVE)
+                return self._query_which
 
     def get_losses(self, actions, rewards, masks):
         return 0.0
