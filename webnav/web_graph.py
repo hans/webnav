@@ -228,13 +228,14 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
 
 class Navigator(object):
 
-    def __init__(self, graph, beam_size, path_length, dummy_page=None):
+    def __init__(self, graph, beam_size, path_length):
         self.graph = graph
         self.beam_size = beam_size
         self.path_length = path_length
 
-        self._dummy_page = dummy_page \
-                or np.random.choice(len(self.graph.articles))
+        assert self.graph.articles[1].title == "_Dummy", \
+                "This navigator requires articles[1] be a dummy"
+        self._dummy_page = 1
         print "Dummy page: ", self._dummy_page, \
                 self.graph.get_article_title(self._dummy_page)
 
