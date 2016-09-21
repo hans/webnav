@@ -70,9 +70,10 @@ def eval(model, envs, sv, sm, log_f, args):
         sample_navigator = webnav_envs[sample_idx]._navigator
         sample_done = False
 
-        for iter_info in rollout(model, envs, args, epsilon=0):
+        iter_info = rollout(model, envs, args, epsilon=0, is_training=False)
+        for step_info in iter_info:
             t, observations, _, actions_t, rewards_t, dones_t, masks_t = \
-                    iter_info
+                    step_info
 
             if args.task_type == "communication":
                 action_descriptions = [env_.describe_action(action)
