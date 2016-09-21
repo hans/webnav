@@ -102,7 +102,7 @@ def log_trajectory(trajectory, target, env, log_f):
         elif action_type == SEND:
             desc = "SEND"
 
-        desc_fmt = "\t%-40s\t%.5f"
+        desc_fmt = "\t%-40s\t%+.5f"
         if "nav_mean" in tags:
             # Log moments of navigation distributions
             desc_fmt = "\t%%-40s\t%%+.5f\t\t%+.5f\t%+.5f" % \
