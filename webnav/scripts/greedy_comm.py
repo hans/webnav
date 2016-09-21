@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
     args = p.parse_args()
     args.batch_size = 1
-    args.task_type = "communication"
+    args.task_type = "navigation"
 
     graph, envs, eval_envs = build_webnav_conversation_envs(args)
     log_f = sys.stdout

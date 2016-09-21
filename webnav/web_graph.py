@@ -28,7 +28,11 @@ class EmbeddedWebGraph(object):
 
         # Hack: use a random page as the "STOP" sentinel.
         # Works in expectation. :)
-        self.stop_sentinel = stop_sentinel or np.random.choice(len(self.articles))
+        if stop_sentinel is None:
+            stop_sentinel = np.random.choice(len(self.articles))
+        self.stop_sentinel = stop_sentinel
+        print "Stop sentinel: ", self.stop_sentinel, \
+                self.articles[self.stop_sentinel].title
 
         self._eval_cursor = 0
 
@@ -178,8 +182,8 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
                         set(token.lower() for token in article["lead_tokens"]))
                     for i, article in enumerate(data["articles"])]
 
-        assert articles[0].title == "Stop"
-        assert articles[1].title == "Dummy"
+        assert articles[0].title == "_Stop"
+        assert articles[1].title == "_Dummy"
         stop_sentinel = 0
 
         datasets = {}
@@ -224,14 +228,15 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
 
 class Navigator(object):
 
-    def __init__(self, graph, beam_size, path_length):
+    def __init__(self, graph, beam_size, path_length, dummy_page=None):
         self.graph = graph
         self.beam_size = beam_size
         self.path_length = path_length
 
-        assert self.graph.articles[1].title == "Dummy", \
-                "Graph must have articles[1] == dummy article"
-        self._dummy_page = 1
+        self._dummy_page = dummy_page \
+                or np.random.choice(len(self.graph.articles))
+        print "Dummy page: ", self._dummy_page, \
+                self.graph.get_article_title(self._dummy_page)
 
         self._id, self._path, self._length = None, None, None
         self._beam = None
