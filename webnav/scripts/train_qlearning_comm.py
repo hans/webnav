@@ -380,8 +380,13 @@ if __name__ == "__main__":
     p.add_argument("--wiki_path")
     p.add_argument("--qp_path")
     p.add_argument("--emb_path")
+    p.add_argument("--emb_paths", action="append")
 
     args = util.parse_args_with_file_defaults(p, {"logdir"})
+    # Backwards compatibility
+    if args.emb_paths is None:
+        args.emb_paths = [args.emb_path]
+    assert len(args.emb_paths) >= 1
 
     if args.mode == "train":
         train(args)

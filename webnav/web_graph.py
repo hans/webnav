@@ -153,7 +153,7 @@ class EmbeddedWikiNavGraph(EmbeddedWebGraph):
 
 class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
 
-    def __init__(self, data_path, path_length, emb_path=None):
+    def __init__(self, data_path, path_length, emb_paths=None):
         try:
             import cPickle as pickle
         except: import pickle
@@ -162,9 +162,12 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
             data = pickle.load(data_f)
         self._data = data
 
-        if emb_path is not None:
-            self.embeddings = embeddings = np.load(emb_path)["arr_0"]
-            self.embedding_dim = embeddings.shape[1]
+        if emb_paths is not None:
+            embeddings = [np.load(emb_path)["arr_0"] for emb_path in emb_paths]
+            self.embedding_dim = embeddings[0].shape[1]
+            for other_embeddings in embeddings:
+                assert other_embeddings.shape == embeddings[0].shape
+            self.embeddings = embeddings
         else:
             print >> sys.stderr, \
                     ("=====================================================\n"
@@ -175,10 +178,10 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
             shape = (len(data["articles"]), self.embedding_dim)
             # Match Wikispeedia embedding distribution
             embeddings = np.random.normal(scale=0.15, size=shape)
-            self.embeddings = embeddings
+            self.embeddings = [embeddings]
 
         articles = [EmbeddedArticle(
-                        article["name"], embeddings[i],
+                        article["name"], self.embeddings[0][i],
                         set(token.lower() for token in article["lead_tokens"]))
                     for i, article in enumerate(data["articles"])]
 
@@ -213,14 +216,15 @@ class EmbeddedWikispeediaGraph(EmbeddedWebGraph):
     def get_article_links(self, article_idx):
         return self._data["links"].get(article_idx, [self.stop_sentinel])
 
-    def get_query_embeddings(self, paths):
+    def get_query_embeddings(self, paths, embedding_set=0):
         # Get the last non-STOP page in each corresponding path.
         last_pages = [[idx for idx in path if idx != self.stop_sentinel][-1]
                       for path in paths]
-        return self.get_article_embeddings(last_pages)
+        return self.get_article_embeddings(last_pages,
+                                           embedding_set=embedding_set)
 
-    def get_article_embeddings(self, article_ids):
-        return self.embeddings[article_ids]
+    def get_article_embeddings(self, article_ids, embedding_set=0):
+        return self.embeddings[embedding_set][article_ids]
 
     def _prepare_path(self, path):
         return path

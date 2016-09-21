@@ -58,6 +58,15 @@ class WebNavEmbeddingAgent(OracleAgent):
     article's embedding.
     """
 
+    def __init__(self, *args, **kwargs):
+        super(WebNavEmbeddingAgent, self).__init__(*args, **kwargs)
+
+        embedding_set = 0
+        if len(self.env._graph.embeddings) > 1:
+            # Use secondary embedding set if available.
+            embedding_set = 1
+        self.embeddings = self.env._graph.embeddings[embedding_set]
+
     @overrides
     def respond(self, env, message_str):
         response = ""
@@ -68,8 +77,8 @@ class WebNavEmbeddingAgent(OracleAgent):
             matched = True
 
             graph = env._graph
-            beam = graph.get_article_embeddings(env._navigator._beam)
-            query = env._query_embedding
+            beam = self.embeddings[env._navigator._beam]
+            query = self.embeddings[env._navigator.target_id]
 
             scores = np.dot(beam, query)
             scores /= np.linalg.norm(beam, axis=1)

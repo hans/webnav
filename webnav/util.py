@@ -35,7 +35,7 @@ def build_webnav_envs(args):
     elif args.data_type == "wikispeedia":
         graph = web_graph.EmbeddedWikispeediaGraph(args.wiki_path,
                                                    args.path_length,
-                                                   emb_path=args.emb_path)
+                                                   emb_paths=args.emb_paths)
     else:
         raise ValueError("Invalid data_type %s" % args.data_type)
 
