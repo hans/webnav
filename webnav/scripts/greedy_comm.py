@@ -20,7 +20,7 @@ def rollout(env, args, beta=1.0):
     navigator = wrapped_env._navigator
     graph = wrapped_env._graph
 
-    trajectory = [(WRAPPED, (0, wrapped_env.cur_article_id), 0.0)]
+    trajectory = [(WRAPPED, (0, wrapped_env.cur_article_id), {})]
     target = env._env._navigator.target_id
     steps_to_target = None
 
@@ -42,7 +42,7 @@ def rollout(env, args, beta=1.0):
         observation = next_step.observation
 
         traj_data = (action, wrapped_env.cur_article_id)
-        trajectory.append((WRAPPED, traj_data, next_step.reward))
+        trajectory.append((WRAPPED, traj_data, {"reward": next_step.reward}))
 
         if next_step.done:
             break
@@ -64,11 +64,18 @@ if __name__ == "__main__":
 
     p.add_argument("--data_type", choices=["wikinav", "wikispeedia"],
                    default="wikinav")
+    p.add_argument("--agent_type", choices=["oracle", "cycling_oracle"],
+                   default="oracle")
     p.add_argument("--wiki_path", required=True)
     p.add_argument("--qp_path")
-    p.add_argument("--emb_path", required=True)
+    p.add_argument("--emb_path")
+    p.add_argument("--emb_paths", action="append")
 
     args = p.parse_args()
+    # Backward compatibility
+    if args.emb_paths is None:
+        assert args.emb_path is not None
+        args.emb_paths = [args.emb_path]
     args.batch_size = 1
     args.task_type = "navigation"
 
