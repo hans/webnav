@@ -664,10 +664,11 @@ class OracleCommModel(CommModel):
         self._query_which[:, which_action] = 1
 
         # Prepare score return when we want to utter "cycle"
-        self._query_cycle = np.zeros((batch_size, self.env.action_space.n))
-        cycle_idx = self.agent._token2idx["cycle"]
-        cycle_action = self.env._env.action_space.n + cycle_idx
-        self._query_cycle[:, cycle_action] = 1
+        if self.agent.allow_cycle:
+            self._query_cycle = np.zeros((batch_size, self.env.action_space.n))
+            cycle_idx = self.agent._token2idx["cycle"]
+            cycle_action = self.env._env.action_space.n + cycle_idx
+            self._query_cycle[:, cycle_action] = 1
 
     def step(self, t, observations, masks, is_training):
         if t == 0:
