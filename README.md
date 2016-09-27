@@ -46,6 +46,10 @@ Notes:
   the mother. It only receives a response after executing `SEND`.
 - There is a fixed rollout length; after reaching the target page, this child
   learns to make short "cycles" around the page.
+- The numbers in parentheses indicate the index of the action in the ordered
+  list of possible actions. The mother responds with a number string, which
+  the child learns to correctly map onto its own action space (as demonstrated
+  by these numbers in parentheses).
 
 ```
 Trajectory: (target Frédéric_Chopin)
